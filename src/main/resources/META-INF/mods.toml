@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
 modId="tiercity"
-version="0.1.0"
+version="0.2.0"
 displayName="Tier City (prototype)"
 description='Layered artificial city world generator prototype.'
 

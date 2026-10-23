@@ -47,8 +47,9 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                 for (int lz = 0; lz < 16; lz++) {
                     int wx = minX + lx, wz = minZ + lz;
                     CityLayout.Column col = CityLayout.column(wx, wz);
+                    if (col.deckTop() < 0) continue;
                     int top = col.topSolid();
-                    for (int y = CityLayout.MIN_Y; y <= top; y++) {
+                    for (int y = col.bottomSolid(); y <= top; y++) {
                         BlockState s = CityLayout.block(col, wx, y, wz);
                         if (!s.isAir()) {
                             chunk.setBlockState(pos.set(wx, y, wz), s, false);
@@ -69,7 +70,7 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
 
     @Override public int getGenDepth() { return CityLayout.HEIGHT; }
 
-    @Override public int getSeaLevel() { return CityLayout.FLOOR_Y; }
+    @Override public int getSeaLevel() { return CityLayout.MIN_Y; }
 
     @Override public int getMinY() { return CityLayout.MIN_Y; }
 
