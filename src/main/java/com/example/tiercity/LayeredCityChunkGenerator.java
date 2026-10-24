@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.NoiseColumn;
@@ -27,8 +28,15 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
             inst.group(BiomeSource.CODEC.fieldOf("biome_source").forGetter(ChunkGenerator::getBiomeSource))
                     .apply(inst, inst.stable(LayeredCityChunkGenerator::new)));
 
+    private static final ResourceLocation SEED_KEY = new ResourceLocation(TierCityMod.MODID, "layout");
+
     public LayeredCityChunkGenerator(BiomeSource biomeSource) {
         super(biomeSource);
+    }
+
+    /** 월드 시드에서 파생한 레이아웃 시드. 같은 월드 시드이면 항상 같은 값. */
+    private static long layoutSeed(RandomState randomState) {
+        return randomState.getOrCreateRandomFactory(SEED_KEY).at(0, 0, 0).nextLong();
     }
 
     @Override
@@ -39,6 +47,7 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Executor executor, Blender blender, RandomState randomState,
                                                         StructureManager structureManager, ChunkAccess chunk) {
+        final long seed = layoutSeed(randomState);
         return CompletableFuture.supplyAsync(() -> {
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             int minX = chunk.getPos().getMinBlockX();
@@ -46,11 +55,11 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
                     int wx = minX + lx, wz = minZ + lz;
-                    CityLayout.Column col = CityLayout.column(wx, wz);
+                    CityLayout.Column col = CityLayout.column(seed, wx, wz);
                     if (col.deckTop() < 0) continue;
                     int top = col.topSolid();
                     for (int y = col.bottomSolid(); y <= top; y++) {
-                        BlockState s = CityLayout.block(col, wx, y, wz);
+                        BlockState s = CityLayout.block(seed, col, wx, y, wz);
                         if (!s.isAir()) {
                             chunk.setBlockState(pos.set(wx, y, wz), s, false);
                         }
@@ -76,15 +85,16 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
 
     @Override
     public int getBaseHeight(int x, int z, Heightmap.Types type, LevelHeightAccessor level, RandomState random) {
-        return CityLayout.column(x, z).topSolid() + 1;
+        return CityLayout.column(layoutSeed(random), x, z).topSolid() + 1;
     }
 
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level, RandomState random) {
-        CityLayout.Column col = CityLayout.column(x, z);
+        long seed = layoutSeed(random);
+        CityLayout.Column col = CityLayout.column(seed, x, z);
         BlockState[] states = new BlockState[CityLayout.HEIGHT];
         for (int i = 0; i < states.length; i++) {
-            states[i] = CityLayout.block(col, x, CityLayout.MIN_Y + i, z);
+            states[i] = CityLayout.block(seed, col, x, CityLayout.MIN_Y + i, z);
         }
         return new NoiseColumn(CityLayout.MIN_Y, states);
     }
