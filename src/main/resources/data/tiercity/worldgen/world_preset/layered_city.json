@@ -1,0 +1,11 @@
+{
+  "dimensions": {
+    "minecraft:overworld": {
+      "type": "tiercity:layered_city",
+      "generator": {
+        "type": "tiercity:layered_city",
+        "biome_source": { "type": "minecraft:fixed", "biome": "tiercity:layered_city" }
+      }
+    }
+  }
+}

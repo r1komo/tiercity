@@ -42,6 +42,7 @@ public final class CityLayout {
     public static final int FLARE_H = 24;          // 기둥머리 높이
     public static final int FLARE_ADD = 8;         // 기둥머리에서 늘어나는 반지름
     public static final int PIER_LEN = 16;         // 통로 중앙 교각 길이
+    public static final int SPAWN_OFFSET = 300;    // 첫 구획 중심에서 스폰 지점까지의 거리(+X 방향)
 
     /** {중심 dx, 중심 dz, 반지름} (구획 중심 기준) */
     private static final int[][] PILLARS = {
@@ -111,6 +112,22 @@ public final class CityLayout {
     /** 통로 중앙의 교각 하나 (통로 폭 전체). */
     private static boolean walkPier(int g, int off) {
         return g >= GAP / 2 - PIER_LEN / 2 && g < GAP / 2 + PIER_LEN / 2 && off <= WALK_HALF;
+    }
+
+    /** (x, z)에서 가장 가까운 원형 구획의 중심 월드 좌표 {x, z}. */
+    public static int[] nearestCenter(int x, int z) {
+        int c0x = Math.floorDiv(x, PERIOD), c0z = Math.floorDiv(z, PERIOD);
+        long best = Long.MAX_VALUE;
+        int bx = 0, bz = 0;
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                int ccx = (c0x + i) * PERIOD + MID, ccz = (c0z + j) * PERIOD + MID;
+                long dx = x - ccx, dz = z - ccz;
+                long d = dx * dx + dz * dz;
+                if (d < best) { best = d; bx = ccx; bz = ccz; }
+            }
+        }
+        return new int[]{bx, bz};
     }
 
     public static Column column(long seed, int wx, int wz) {

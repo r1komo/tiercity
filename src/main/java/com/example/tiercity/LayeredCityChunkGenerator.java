@@ -35,7 +35,7 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
     }
 
     /** 월드 시드에서 파생한 레이아웃 시드. 같은 월드 시드이면 항상 같은 값. */
-    private static long layoutSeed(RandomState randomState) {
+    public static long layoutSeed(RandomState randomState) {
         return randomState.getOrCreateRandomFactory(SEED_KEY).at(0, 0, 0).nextLong();
     }
 
