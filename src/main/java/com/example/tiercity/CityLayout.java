@@ -4,11 +4,11 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * 층상 도시 레이아웃 (v0.3: 거대 스케일, 바닥 없음).
+ * 층상 도시 레이아웃 (v0.4: 거대 스케일, 바닥 없음, 원형 데크, 두꺼운 기둥).
  * (x, z) -> 컬럼 사양을 돌려주는 순수 함수 집합이므로 청크 경계와 무관하게 항상 같은 결과가 나온다.
  *
  * 평면 구조: 주기 PERIOD = CELL(구획 플랫폼) + GAP(통로 구간).
- *  - 구획(CELL x CELL): 구획마다 높이(tier)가 다른 데크 + 아래 기둥 + 가장자리 난간
+ *  - 구획(지름 CELL의 원): 구획마다 높이(tier)가 다른 원형 데크 + 아래 두꺼운 기둥 + 가장자리 난간
  *  - 통로(GAP): 인접 구획 중심선을 잇는 폭 15의 연결 통로, 두 구획 높이 사이를 경사로 보간
  *  - 교차부(GAP x GAP): 비어 있음
  * 지면은 없다. 기둥은 월드 바닥(MIN_Y)까지 내려가고 그 아래는 허공이다.
@@ -31,6 +31,10 @@ public final class CityLayout {
     public static final int PARAPET_H = 2;
     public static final int EDGE_W = 2;            // 구획 가장자리 난간 두께
     public static final int RAIL_W = 2;            // 통로 난간 두께
+    public static final int PILLAR_SPACING = 256;  // 두꺼운 기둥 격자 간격(구획 중심 기준)
+    public static final int PILLAR_R = 20;         // 일반 기둥 반지름 (지름 약 41)
+    public static final int CORE_R = 40;           // 구획 중앙 코어 기둥 반지름
+    public static final int PIER_LEN = 16;         // 통로 중앙 교각 길이
 
     /** deckTop < 0 이면 데크 없음. */
     public record Column(int deckTop, int deckBottom, boolean pillar, boolean parapet) {
@@ -76,14 +80,21 @@ public final class CityLayout {
         return (int) Math.round(a + (b - a) * (g + 0.5) / GAP);
     }
 
+    /** 구획 중심 기준 256 간격 격자 위의 원형 기둥. 원 가장자리에 너무 가까운 격자점은 제외. 중앙은 굵은 코어. */
     private static boolean deckPillar(int px, int pz) {
-        int a = px % 48, b = pz % 48;
-        return a >= 21 && a <= 26 && b >= 21 && b <= 26;   // 6x6, 48칸 간격
+        int dx = px - MID, dz = pz - MID;
+        int gx = Math.floorDiv(dx + PILLAR_SPACING / 2, PILLAR_SPACING) * PILLAR_SPACING;
+        int gz = Math.floorDiv(dz + PILLAR_SPACING / 2, PILLAR_SPACING) * PILLAR_SPACING;
+        int lim = CELL / 2 - 64;
+        if (gx * gx + gz * gz > lim * lim) return false;
+        int r = (gx == 0 && gz == 0) ? CORE_R : PILLAR_R;
+        int ex = dx - gx, ez = dz - gz;
+        return ex * ex + ez * ez <= r * r;
     }
 
+    /** 통로 중앙의 교각 하나 (통로 폭 전체). */
     private static boolean walkPillar(int g, int off) {
-        int m = g % 32;
-        return m >= 14 && m <= 17 && off <= 3;              // 4x7, 32칸 간격
+        return g >= GAP / 2 - PIER_LEN / 2 && g < GAP / 2 + PIER_LEN / 2 && off <= WALK_HALF;
     }
 
     public static Column column(int wx, int wz) {
@@ -92,13 +103,16 @@ public final class CityLayout {
         boolean inX = px < CELL, inZ = pz < CELL;
 
         if (inX && inZ) {
+            // 원형 구획: 칸 중심 기준 반지름 CELL/2 (정수 연산을 위해 좌표를 2배로 비교)
+            int dx2 = 2 * px + 1 - CELL, dz2 = 2 * pz + 1 - CELL;
+            int d2 = dx2 * dx2 + dz2 * dz2;
+            if (d2 >= CELL * CELL) return NONE;
             int top = tierTop(cx, cz);
-            boolean ex = px < EDGE_W || px >= CELL - EDGE_W;
-            boolean ez = pz < EDGE_W || pz >= CELL - EDGE_W;
-            boolean openX = Math.abs(pz - MID) <= WALK_HALF;
-            boolean openZ = Math.abs(px - MID) <= WALK_HALF;
-            boolean parapet = (ex && !openX) || (ez && !openZ);
-            return new Column(top, top - DECK_THICK + 1, deckPillar(px, pz), parapet);
+            int inner = CELL - 2 * EDGE_W;
+            boolean rim = d2 >= inner * inner;
+            boolean open = (Math.abs(pz - MID) <= WALK_HALF && Math.abs(dx2) > CELL / 2)
+                    || (Math.abs(px - MID) <= WALK_HALF && Math.abs(dz2) > CELL / 2);
+            return new Column(top, top - DECK_THICK + 1, deckPillar(px, pz), rim && !open);
         }
         if (!inX && inZ) { // X 방향 통로
             int off = Math.abs(pz - MID);
