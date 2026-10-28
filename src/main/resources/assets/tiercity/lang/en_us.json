@@ -1,4 +1,4 @@
 {
   "generator.tiercity.layered_city": "Tier City",
-  "message.tiercity.items_recovered": "You fell off the deck. Your items were left near the rim at (%s, %s, %s)."
+  "message.tiercity.items_recovered": "You fell into the abyss. Your items were left on the nearest deck at (%s, %s, %s)."
 }

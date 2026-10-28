@@ -48,6 +48,7 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
     public CompletableFuture<ChunkAccess> fillFromNoise(Executor executor, Blender blender, RandomState randomState,
                                                         StructureManager structureManager, ChunkAccess chunk) {
         final long seed = layoutSeed(randomState);
+        final CityLayout.Params params = TierCityConfig.params();
         return CompletableFuture.supplyAsync(() -> {
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             int minX = chunk.getPos().getMinBlockX();
@@ -55,8 +56,8 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
                     int wx = minX + lx, wz = minZ + lz;
-                    CityLayout.Column col = CityLayout.column(seed, wx, wz);
-                    if (col.deckTop() < 0) continue;
+                    CityLayout.Column col = CityLayout.column(params, seed, wx, wz);
+                    if (!col.hasDeck() && !col.hasPillar()) continue;
                     int top = col.topSolid();
                     for (int y = col.bottomSolid(); y <= top; y++) {
                         BlockState s = CityLayout.block(seed, col, wx, y, wz);
@@ -85,13 +86,13 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
 
     @Override
     public int getBaseHeight(int x, int z, Heightmap.Types type, LevelHeightAccessor level, RandomState random) {
-        return CityLayout.column(layoutSeed(random), x, z).topSolid() + 1;
+        return CityLayout.column(TierCityConfig.params(), layoutSeed(random), x, z).topSolid() + 1;
     }
 
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level, RandomState random) {
         long seed = layoutSeed(random);
-        CityLayout.Column col = CityLayout.column(seed, x, z);
+        CityLayout.Column col = CityLayout.column(TierCityConfig.params(), seed, x, z);
         BlockState[] states = new BlockState[CityLayout.HEIGHT];
         for (int i = 0; i < states.length; i++) {
             states[i] = CityLayout.block(seed, col, x, CityLayout.MIN_Y + i, z);
@@ -101,6 +102,6 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
 
     @Override
     public void addDebugScreenInfo(List<String> info, RandomState random, BlockPos pos) {
-        info.add("TierCity cell=" + Math.floorDiv(pos.getX(), CityLayout.PERIOD) + "," + Math.floorDiv(pos.getZ(), CityLayout.PERIOD));
+        info.add("TierCity radius=" + TierCityConfig.params().radius());
     }
 }

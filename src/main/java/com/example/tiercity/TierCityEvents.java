@@ -18,7 +18,7 @@ import net.minecraftforge.fml.common.Mod;
 public final class TierCityEvents {
     private TierCityEvents() {}
 
-    /** 월드 최초 생성 시 스폰: 첫 구획 중심에서 +X로 300블록 떨어진 데크 위. */
+    /** 월드 최초 생성 시 스폰: 설정 파일의 spawnX/spawnZ에서 가장 가까운 남아 있는 판 위. */
     @SubscribeEvent
     public static void onCreateSpawn(LevelEvent.CreateSpawnPosition event) {
         LevelAccessor accessor = event.getLevel();
@@ -26,16 +26,15 @@ public final class TierCityEvents {
         if (!(level.getChunkSource().getGenerator() instanceof LayeredCityChunkGenerator)) return;
 
         long seed = LayeredCityChunkGenerator.layoutSeed(level.getChunkSource().randomState());
-        int sx = CityLayout.MID + CityLayout.SPAWN_OFFSET;
-        int sz = CityLayout.MID;
-        CityLayout.Column col = CityLayout.column(seed, sx, sz);
-        if (col.deckTop() < 0) return;
+        CityLayout.Params params = TierCityConfig.params();
+        int[] d = CityLayout.nearestDeck(params, seed, params.spawnX(), params.spawnZ(), 2048);
+        if (d == null) return;
 
-        event.getSettings().setSpawn(new BlockPos(sx, col.deckTop() + 1, sz), 90.0F);
+        event.getSettings().setSpawn(new BlockPos(d[0], d[2] + 1, d[1]), 90.0F);
         event.setCanceled(true);
     }
 
-    /** 허공으로 떨어져 죽으면 아이템을 가장 가까운 데크 가장자리 안쪽으로 옮긴다. */
+    /** 허공으로 떨어져 죽으면 아이템을 가장 가까운 남아 있는 판 위로 옮긴다. */
     @SubscribeEvent
     public static void onPlayerDrops(LivingDropsEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
@@ -45,27 +44,32 @@ public final class TierCityEvents {
         if (event.getDrops().isEmpty()) return;
 
         long seed = LayeredCityChunkGenerator.layoutSeed(level.getChunkSource().randomState());
-        double x = player.getX(), z = player.getZ();
-        int[] c = CityLayout.nearestCenter((int) Math.floor(x), (int) Math.floor(z));
-        double dx = x - c[0], dz = z - c[1];
-        double len = Math.sqrt(dx * dx + dz * dz);
-        double max = CityLayout.CELL / 2.0 - 8.0;   // 난간 안쪽
-        double tx = x, tz = z;
-        if (len > max) {
-            tx = c[0] + dx / len * max;
-            tz = c[1] + dz / len * max;
+        CityLayout.Params params = TierCityConfig.params();
+        int[] d = CityLayout.nearestDeck(params, seed, (int) Math.floor(player.getX()), (int) Math.floor(player.getZ()), 4096);
+        if (d == null) return;
+
+        int tx = d[0], tz = d[1], ty = d[2];
+        // 가장자리에 걸치지 않도록 사망 지점에서 멀어지는 방향으로 3블록 더 안쪽을 시도
+        double vx = d[0] - player.getX(), vz = d[1] - player.getZ();
+        double len = Math.sqrt(vx * vx + vz * vz);
+        if (len > 0.5) {
+            int qx = (int) Math.round(d[0] + vx / len * 3.0);
+            int qz = (int) Math.round(d[1] + vz / len * 3.0);
+            CityLayout.Column q = CityLayout.column(params, seed, qx, qz);
+            if (q.hasDeck()) {
+                tx = qx;
+                tz = qz;
+                ty = q.deckTop();
+            }
         }
-        int ix = (int) Math.floor(tx), iz = (int) Math.floor(tz);
-        CityLayout.Column col = CityLayout.column(seed, ix, iz);
-        if (col.deckTop() < 0) return;
-        int iy = col.deckTop() + 1;
 
         for (ItemEntity item : event.getDrops()) {
-            item.setPos(tx + (level.random.nextDouble() - 0.5) * 2.0, iy, tz + (level.random.nextDouble() - 0.5) * 2.0);
+            item.setPos(tx + 0.5 + (level.random.nextDouble() - 0.5) * 0.8, ty + 1.0,
+                    tz + 0.5 + (level.random.nextDouble() - 0.5) * 0.8);
             item.setDeltaMovement(Vec3.ZERO);
             item.setUnlimitedLifetime();
             item.setInvulnerable(true);
         }
-        player.sendSystemMessage(Component.translatable("message.tiercity.items_recovered", ix, iy, iz));
+        player.sendSystemMessage(Component.translatable("message.tiercity.items_recovered", tx, ty + 1, tz));
     }
 }
