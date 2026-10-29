@@ -25,12 +25,15 @@ public final class CityLayout {
     public static final int PILLAR_R = 32;
     public static final int TILT_MARGIN = 13;      // 기울어진 기둥이 옆으로 밀려나는 최대 거리 + 여유
     public static final int PROTECT_R = 800;       // 중심 보호 반경: 조각이 제거되지 않음
+    public static final double PIT_THRESHOLD = 0.84;   // 값이 클수록 파임이 드묾
+    public static final int REBAR_DIST = 18;       // 철근 묶음이 기둥 중심에서 떨어진 거리(4방향)
 
     /** 설정 파일에서 읽어 온 값. */
     public record Params(int radius, int spawnX, int spawnZ, int fragmentSize, int heightRange,
                          int bigStep, double bigProb, double removalBase, double removalRim,
-                         double crackHalfMax, double crackChance, double terrainAmp, double tiltMax) {
-        public static final Params DEFAULT = new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06);
+                         double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
+                         double talusChance, int talusMaxHeight) {
+        public static final Params DEFAULT = new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.25, 5);
     }
 
     /** 기둥 하나의 고유 속성(좌표와 시드로 결정). */
@@ -39,9 +42,10 @@ public final class CityLayout {
         final double slopeX, slopeZ;   // 아래로 내려갈수록 밀려나는 비율
         final int brk;                 // 부러진 깊이
         final double planeA, planeB;   // 파단면 기울기
-        Pillar(int cx, int cz, double slopeX, double slopeZ, int brk, double planeA, double planeB) {
+        final double rebarAng;         // 철근 묶음 4개의 배치 회전각
+        Pillar(int cx, int cz, double slopeX, double slopeZ, int brk, double planeA, double planeB, double rebarAng) {
             this.cx = cx; this.cz = cz; this.slopeX = slopeX; this.slopeZ = slopeZ;
-            this.brk = brk; this.planeA = planeA; this.planeB = planeB;
+            this.brk = brk; this.planeA = planeA; this.planeB = planeB; this.rebarAng = rebarAng;
         }
     }
 
@@ -75,7 +79,7 @@ public final class CityLayout {
     private static final BlockState DECK_TOP = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
     private static final BlockState DECK_BODY = Blocks.GRAY_CONCRETE.defaultBlockState();
     private static final BlockState PILLAR = Blocks.POLISHED_ANDESITE.defaultBlockState();
-    private static final BlockState REBAR = Blocks.IRON_BARS.defaultBlockState();
+    private static final BlockState REBAR = Blocks.RAW_IRON_BLOCK.defaultBlockState();
 
     private CityLayout() {}
 
@@ -188,7 +192,8 @@ public final class CityLayout {
         int brk = r < 0.4 ? (int) (u * 9) : (r < 0.8 ? 8 + (int) (u * 23) : 30 + (int) (u * 41));
         double pa = hash01(seed, cx, cz, 96) * 2 * Math.PI;
         double pm = 0.15 + 0.45 * hash01(seed, cx, cz, 97);
-        return new Pillar(cx, cz, sx, sz, brk, Math.cos(pa) * pm, Math.sin(pa) * pm);
+        double ra = hash01(seed, cx, cz, 98) * 2 * Math.PI;
+        return new Pillar(cx, cz, sx, sz, brk, Math.cos(pa) * pm, Math.sin(pa) * pm, ra);
     }
 
     /** 높이 y에서 기둥 중심까지 거리의 제곱. */
@@ -217,6 +222,43 @@ public final class CityLayout {
         double jag = noise(seed, x, z, 5.0, 51);
         int by = Y0 - 1 - pl.brk - (int) Math.round(Math.max(0.0, plane) + jag * 6.0);
         return Math.max(6, by);
+    }
+
+    private static double noise3(long seed, double x, double y, double z, double cell, int salt) {
+        double fx = x / cell, fy = y / cell, fz = z / cell;
+        int ix = (int) Math.floor(fx), iy = (int) Math.floor(fy), iz = (int) Math.floor(fz);
+        double tx = fx - ix, ty = fy - iy, tz = fz - iz;
+        tx = tx * tx * (3 - 2 * tx);
+        ty = ty * ty * (3 - 2 * ty);
+        tz = tz * tz * (3 - 2 * tz);
+        double c000 = hash01(seed, ix, iz, iy * 131 + salt), c100 = hash01(seed, ix + 1, iz, iy * 131 + salt);
+        double c010 = hash01(seed, ix, iz + 1, iy * 131 + salt), c110 = hash01(seed, ix + 1, iz + 1, iy * 131 + salt);
+        double c001 = hash01(seed, ix, iz, (iy + 1) * 131 + salt), c101 = hash01(seed, ix + 1, iz, (iy + 1) * 131 + salt);
+        double c011 = hash01(seed, ix, iz + 1, (iy + 1) * 131 + salt), c111 = hash01(seed, ix + 1, iz + 1, (iy + 1) * 131 + salt);
+        double x00 = c000 * (1 - tx) + c100 * tx, x10 = c010 * (1 - tx) + c110 * tx;
+        double x01 = c001 * (1 - tx) + c101 * tx, x11 = c011 * (1 - tx) + c111 * tx;
+        double y0 = x00 * (1 - tz) + x10 * tz, y1 = x01 * (1 - tz) + x11 * tz;
+        return y0 * (1 - ty) + y1 * ty;
+    }
+
+    /**
+     * 부러진 기둥의 철근: 기둥마다 정해진 4곳(기둥 중심에서 REBAR_DIST, 90도 간격)에 2x2 묶음.
+     * 묶음별로 존재 여부(75%)와 높이(윗면 위로 3~8)가 정해져 있다. 없으면 -1.
+     */
+    private static int rebarTopAt(long seed, Pillar pl, int x, int z, int pillarTop) {
+        for (int k = 0; k < 4; k++) {
+            double ang = pl.rebarAng + k * Math.PI / 2;
+            int bx = pl.cx + (int) Math.round(REBAR_DIST * Math.cos(ang));
+            int bz = pl.cz + (int) Math.round(REBAR_DIST * Math.sin(ang));
+            if (x < bx || x > bx + 1 || z < bz || z > bz + 1) continue;
+            if (hash01(seed, pl.cx + k * 7, pl.cz, 83) >= 0.75) return -1;
+            int by = breakY(seed, pl, bx, bz);
+            double lim = (PILLAR_R - 3.0) * (PILLAR_R - 3.0);
+            if (footprintD2(pl, bx, bz, by) > lim || footprintD2(pl, bx + 1, bz + 1, by) > lim) return -1;
+            int h = 3 + rand(seed, pl.cx + k * 7, pl.cz, 84, 6);
+            return Math.max(by + h, pillarTop + 1);
+        }
+        return -1;
     }
 
     // ---------------- 컬럼 ----------------
@@ -277,14 +319,15 @@ public final class CityLayout {
                             double tt = (t + shift) / 24.0;
                             int seg = (int) Math.floor(tt);
                             double f = tt - seg;
-                            if (hash01(seed, keyLo, seg, 7) < 0.55) {
+                            if (hash01(seed, keyLo, seg, 7) < p.talusChance()) {
                                 double taper = Math.pow(Math.max(Math.sin(Math.PI * f), 0.0), 0.7);
                                 double jit = 0.75 + 0.5 * noise(seed, wx, wz, 9.0, 61);
-                                double leff = 2.0 * d * taper * jit;
+                                int hp = Math.min(d, p.talusMaxHeight());   // 쌓이는 높이 상한(큰 절벽은 윗부분이 그대로 남음)
+                                double leff = 2.0 * hp * taper * jit;
                                 if (e < leff) {
-                                    double v = topA + d * (1.0 - e / leff);
+                                    double v = topA + hp * (1.0 - e / leff);
                                     v += (noise(seed, wx, wz, 5.0, 62) - 0.5) * 0.8;
-                                    v = Math.max(topA, Math.min(topB, v));
+                                    v = Math.max(topA, Math.min(topA + hp, v));
                                     double hq = Math.floor(v * 2) / 2;
                                     int yb = (int) Math.floor(hq);
                                     slab = (hq - yb) >= 0.5;
@@ -314,11 +357,8 @@ public final class CityLayout {
                     pillarTop = deckBottom - 1;
                 } else {
                     pillarTop = breakY(seed, pil, wx, wz);
-                    // 부러진 윗면에서 솟은 철근
-                    if (inFootprint(pil, wx, wz, pillarTop) && footprintD2(pil, wx, wz, pillarTop) <= (PILLAR_R - 3.0) * (PILLAR_R - 3.0)
-                            && hash01(seed, wx, wz, 81) < 0.03) {
-                        rebarTop = pillarTop + 2 + rand(seed, wx, wz, 82, 5);
-                    }
+                    // 부러진 윗면에서 솟은 철근 묶음(2x2, 기둥마다 정해진 4방향)
+                    rebarTop = rebarTopAt(seed, pil, wx, wz, pillarTop);
                 }
             }
         }
@@ -356,9 +396,12 @@ public final class CityLayout {
             if (y <= c.pillarTop()) {
                 double d2 = footprintD2(pl, x, z, y);
                 if (d2 <= (double) PILLAR_R * PILLAR_R) {
-                    // 바깥 2블록은 군데군데 파여 있음
-                    double inner = PILLAR_R - 2.0;
-                    if (d2 > inner * inner && hash01(seed, x, z, y + 1000) < 0.10) return AIR;
+                    // 표면이 덩어리째 깊게 파여 있음(드물지만 3~7블록 깊이)
+                    double n = noise3(seed, x, y, z, 7.0, 101);
+                    if (n > PIT_THRESHOLD) {
+                        double depth = 2.0 + 5.0 * Math.min(1.0, (n - PIT_THRESHOLD) / 0.12);
+                        if (Math.sqrt(d2) > PILLAR_R - depth) return AIR;
+                    }
                     return PILLAR;
                 }
             } else if (y <= c.rebarTop()) {

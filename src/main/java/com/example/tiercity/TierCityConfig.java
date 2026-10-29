@@ -19,6 +19,8 @@ public final class TierCityConfig {
     private static final ForgeConfigSpec.DoubleValue CRACK_CHANCE;
     private static final ForgeConfigSpec.DoubleValue TERRAIN_AMP;
     private static final ForgeConfigSpec.DoubleValue TILT_MAX;
+    private static final ForgeConfigSpec.DoubleValue TALUS_CHANCE;
+    private static final ForgeConfigSpec.IntValue TALUS_MAX_HEIGHT;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -48,6 +50,10 @@ public final class TierCityConfig {
                 .defineInRange("terrainAmp", 10.0D, 0.0D, 30.0D);
         TILT_MAX = b.comment("Maximum tilt of a single fragment (blocks of height per block of width).")
                 .defineInRange("tiltMax", 0.06D, 0.0D, 0.2D);
+        TALUS_CHANCE = b.comment("Chance that a stretch of a tall cliff base has a rubble slope.")
+                .defineInRange("talusChance", 0.25D, 0.0D, 1.0D);
+        TALUS_MAX_HEIGHT = b.comment("Maximum height (blocks) of rubble slopes. Taller cliffs keep a sheer upper part.")
+                .defineInRange("talusMaxHeight", 5, 1, 12);
         SPEC = b.build();
     }
 
@@ -57,7 +63,8 @@ public final class TierCityConfig {
         try {
             return new CityLayout.Params(RADIUS.get(), SPAWN_X.get(), SPAWN_Z.get(), FRAGMENT_SIZE.get(),
                     HEIGHT_RANGE.get(), BIG_STEP.get(), BIG_PROB.get(), REMOVAL_BASE.get(),
-                    REMOVAL_RIM.get(), CRACK_HALF_MAX.get(), CRACK_CHANCE.get(), TERRAIN_AMP.get(), TILT_MAX.get());
+                    REMOVAL_RIM.get(), CRACK_HALF_MAX.get(), CRACK_CHANCE.get(), TERRAIN_AMP.get(), TILT_MAX.get(),
+                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get());
         } catch (IllegalStateException e) {
             return CityLayout.Params.DEFAULT;
         }
