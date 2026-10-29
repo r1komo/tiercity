@@ -51,7 +51,7 @@ public final class TierCityConfig {
         TILT_MAX = b.comment("Maximum tilt of a single fragment (blocks of height per block of width).")
                 .defineInRange("tiltMax", 0.06D, 0.0D, 0.2D);
         TALUS_CHANCE = b.comment("Chance that a stretch of a tall cliff base has a rubble slope.")
-                .defineInRange("talusChance", 0.25D, 0.0D, 1.0D);
+                .defineInRange("talusChance", 0.4D, 0.0D, 1.0D);
         TALUS_MAX_HEIGHT = b.comment("Maximum height (blocks) of rubble slopes. Taller cliffs keep a sheer upper part.")
                 .defineInRange("talusMaxHeight", 5, 1, 12);
         SPEC = b.build();

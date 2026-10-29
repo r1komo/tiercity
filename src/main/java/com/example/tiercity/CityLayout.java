@@ -19,21 +19,23 @@ public final class CityLayout {
     public static final int HEIGHT = 512;
 
     public static final int LEVEL_BASE = 128;      // 최하층 판 윗면 기준 y
-    public static final int THICK = 12;            // 판 두께
+    public static final int THICK = 16;            // 판 기준 두께(아랫면은 조각과 무관하게 이어지고, 윗면만 조각별로 오르내림)
+    public static final int MIN_THICK = 5;         // 가장 낮게 가라앉은 곳의 최소 두께
+    public static final double TALUS_SECTOR = Math.toRadians(40);   // 조각마다 비탈이 생기는 방향 범위(±)
     public static final int Y0 = LEVEL_BASE - THICK + 1;   // 기둥이 판에 닿는 기준 높이(판 아랫면)
     public static final int PILLAR_SPACING = 384;
     public static final int PILLAR_R = 32;
     public static final int TILT_MARGIN = 13;      // 기울어진 기둥이 옆으로 밀려나는 최대 거리 + 여유
     public static final int PROTECT_R = 800;       // 중심 보호 반경: 조각이 제거되지 않음
     public static final double PIT_THRESHOLD = 0.84;   // 값이 클수록 파임이 드묾
-    public static final int REBAR_DIST = 18;       // 철근 묶음이 기둥 중심에서 떨어진 거리(4방향)
+    public static final int REBAR_DIST = 19;       // 철근 묶음이 기둥 중심에서 떨어진 거리(4방향)
 
     /** 설정 파일에서 읽어 온 값. */
     public record Params(int radius, int spawnX, int spawnZ, int fragmentSize, int heightRange,
                          int bigStep, double bigProb, double removalBase, double removalRim,
                          double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
                          double talusChance, int talusMaxHeight) {
-        public static final Params DEFAULT = new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.25, 5);
+        public static final Params DEFAULT = new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.4, 5);
     }
 
     /** 기둥 하나의 고유 속성(좌표와 시드로 결정). */
@@ -122,15 +124,7 @@ public final class CityLayout {
         Frag(Params p, long seed, int gx, int gz, double sx, double sz) {
             this.gx = gx; this.gz = gz; this.sx = sx; this.sz = sz;
 
-            double dist = Math.sqrt(sx * sx + sz * sz);
-            boolean rem = false;
-            if (dist >= PROTECT_R) {
-                double n = 0.65 * noise(seed, sx, sz, 3072.0, 21) + 0.35 * noise(seed, sx, sz, 768.0, 22);
-                double t = Math.max(0.0, Math.min(1.0, (dist / p.radius() - 0.75) / 0.25));
-                double rim = t * t * (3 - 2 * t);
-                double prob = p.removalBase() * (0.2 + 1.6 * n) + p.removalRim() * rim;
-                rem = hash01(seed, gx, gz, 16) < prob;
-            }
+            boolean rem = computeRemoved(p, seed, gx, gz, sx, sz);
             this.removed = rem;
 
             // 넓은 범위의 완만한 기울기 + 작은 흔들림 + 드문 단층
@@ -158,6 +152,64 @@ public final class CityLayout {
         int heightAt(int x, int z) {
             return LEVEL_BASE + off + (int) Math.round(tx * (x + 0.5 - sx) + tz * (z + 0.5 - sz));
         }
+    }
+
+    private static boolean computeRemoved(Params p, long seed, int gx, int gz, double sx, double sz) {
+        double dist = Math.sqrt(sx * sx + sz * sz);
+        if (dist < PROTECT_R) return false;
+        double n = 0.65 * noise(seed, sx, sz, 3072.0, 21) + 0.35 * noise(seed, sx, sz, 768.0, 22);
+        double t = Math.max(0.0, Math.min(1.0, (dist / p.radius() - 0.75) / 0.25));
+        double rim = t * t * (3 - 2 * t);
+        double prob = p.removalBase() * (0.2 + 1.6 * n) + p.removalRim() * rim;
+        return hash01(seed, gx, gz, 16) < prob;
+    }
+
+    /** 주변 8칸 중 남아 있는 조각이 2개 미만이면 외딴 조각(공중에 떠 있는 섬)으로 보고 함께 제거한다. */
+    private static boolean isolated(Params p, long seed, int gx, int gz) {
+        int S = p.fragmentSize();
+        int present = 0;
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                if (i == 0 && j == 0) continue;
+                int nx = gx + i, nz = gz + j;
+                double sx = nx * (double) S + (0.1 + 0.8 * hash01(seed, nx, nz, 1)) * S;
+                double sz = nz * (double) S + (0.1 + 0.8 * hash01(seed, nx, nz, 2)) * S;
+                if (!computeRemoved(p, seed, nx, nz, sx, sz)) {
+                    present++;
+                    if (present >= 2) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** A에서 B 방향이 A의 비탈 허용 방향(조각마다 하나, ±TALUS_SECTOR) 안에 있는지. 움푹 들어간 조각에 비탈이 사방에서 몰리는 것을 막는다. */
+    private static boolean talusFacing(long seed, int agx, int agz, double asx, double asz, double bsx, double bsz) {
+        double dirB = Math.atan2(bsz - asz, bsx - asx);
+        double pref = hash01(seed, agx, agz, 111) * 2 * Math.PI - Math.PI;
+        double dd = Math.abs(dirB - pref);
+        if (dd > Math.PI) dd = 2 * Math.PI - dd;
+        return dd <= TALUS_SECTOR;
+    }
+
+    /** 시험용: (x, z)에서 가장 가까운 두 조각의 격자 좌표 {ax, az, bx, bz}. */
+    static int[] debugNearestTwo(Params p, long seed, int wx, int wz) {
+        int S = p.fragmentSize();
+        int gx0 = Math.floorDiv(wx, S), gz0 = Math.floorDiv(wz, S);
+        double px = wx + 0.5, pz = wz + 0.5;
+        double q1 = Double.MAX_VALUE, q2 = Double.MAX_VALUE;
+        int agx = 0, agz = 0, bgx = 0, bgz = 0;
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                int gx = gx0 + i, gz = gz0 + j;
+                double sx = gx * (double) S + (0.1 + 0.8 * hash01(seed, gx, gz, 1)) * S;
+                double sz = gz * (double) S + (0.1 + 0.8 * hash01(seed, gx, gz, 2)) * S;
+                double q = (px - sx) * (px - sx) + (pz - sz) * (pz - sz);
+                if (q < q1) { q2 = q1; bgx = agx; bgz = agz; q1 = q; agx = gx; agz = gz; }
+                else if (q < q2) { q2 = q; bgx = gx; bgz = gz; }
+            }
+        }
+        return new int[]{agx, agz, bgx, bgz};
     }
 
     private static long pairKey(long seed, int agx, int agz, int bgx, int bgz) {
@@ -242,20 +294,21 @@ public final class CityLayout {
     }
 
     /**
-     * 부러진 기둥의 철근: 기둥마다 정해진 4곳(기둥 중심에서 REBAR_DIST, 90도 간격)에 2x2 묶음.
-     * 묶음별로 존재 여부(75%)와 높이(윗면 위로 3~8)가 정해져 있다. 없으면 -1.
+     * 부러진 기둥의 철근: 기둥마다 정해진 4곳(기둥 중심에서 REBAR_DIST, 90도 간격)에 3x3 묶음.
+     * 묶음별로 존재 여부(75%)와 높이(윗면 위로 5~14)가 정해져 있다. 없으면 -1.
      */
     private static int rebarTopAt(long seed, Pillar pl, int x, int z, int pillarTop) {
         for (int k = 0; k < 4; k++) {
             double ang = pl.rebarAng + k * Math.PI / 2;
-            int bx = pl.cx + (int) Math.round(REBAR_DIST * Math.cos(ang));
-            int bz = pl.cz + (int) Math.round(REBAR_DIST * Math.sin(ang));
-            if (x < bx || x > bx + 1 || z < bz || z > bz + 1) continue;
+            int bx = pl.cx + (int) Math.round(REBAR_DIST * Math.cos(ang)) - 1;
+            int bz = pl.cz + (int) Math.round(REBAR_DIST * Math.sin(ang)) - 1;
+            if (x < bx || x > bx + 2 || z < bz || z > bz + 2) continue;
             if (hash01(seed, pl.cx + k * 7, pl.cz, 83) >= 0.75) return -1;
-            int by = breakY(seed, pl, bx, bz);
+            int by = breakY(seed, pl, bx + 1, bz + 1);
             double lim = (PILLAR_R - 3.0) * (PILLAR_R - 3.0);
-            if (footprintD2(pl, bx, bz, by) > lim || footprintD2(pl, bx + 1, bz + 1, by) > lim) return -1;
-            int h = 3 + rand(seed, pl.cx + k * 7, pl.cz, 84, 6);
+            if (footprintD2(pl, bx, bz, by) > lim || footprintD2(pl, bx + 2, bz + 2, by) > lim
+                    || footprintD2(pl, bx, bz + 2, by) > lim || footprintD2(pl, bx + 2, bz, by) > lim) return -1;
+            int h = 5 + rand(seed, pl.cx + k * 7, pl.cz, 84, 10);
             return Math.max(by + h, pillarTop + 1);
         }
         return -1;
@@ -294,7 +347,7 @@ public final class CityLayout {
         boolean talus = false, slab = false;
         if (inDisc) {
             Frag fa = new Frag(p, seed, agx, agz, asx, asz);
-            if (!fa.removed) {
+            if (!fa.removed && !isolated(p, seed, agx, agz)) {
                 Frag fb = new Frag(p, seed, bgx, bgz, bsx, bsz);
                 boolean bPresent = !fb.removed;
                 double d1 = Math.sqrt(q1), d2 = Math.sqrt(q2);
@@ -304,13 +357,18 @@ public final class CityLayout {
 
                 boolean crack = bPresent && isCrack(p, seed, key, fa, fb, e);
                 if (!crack) {
-                    int topA = fa.heightAt(wx, wz);
+                    // 아랫면은 조각과 무관하게 이어진다(완만한 기복만 따라감). 윗면이 올라간 조각은 두꺼워져서 떠 보이지 않는다.
+                    double baseCol = p.terrainAmp() * ((2 * noise(seed, wx, wz, 1200.0, 41) - 1)
+                            + 0.35 * (2 * noise(seed, wx, wz, 400.0, 42) - 1));
+                    int bottom = LEVEL_BASE - THICK + 1 + (int) Math.round(baseCol);
+                    int minTop = bottom + MIN_THICK - 1;
+                    int topA = Math.max(fa.heightAt(wx, wz), minTop);
                     int top = topA;
                     baseTop = topA;
                     if (bPresent && dab >= 1e-6) {
-                        int topB = fb.heightAt(wx, wz);
+                        int topB = Math.max(fb.heightAt(wx, wz), minTop);
                         int d = topB - topA;
-                        if (d >= 3) {
+                        if (d >= 3 && talusFacing(seed, agx, agz, asx, asz, bsx, bsz)) {
                             // 높은 쪽 절벽 아래에 쌓인 잔해 비탈: 경계를 따라 부채꼴로 군데군데
                             double ux = -(bsz - asz) / dab, uz = (bsx - asx) / dab;
                             double t = (px - (asx + bsx) / 2) * ux + (pz - (asz + bsz) / 2) * uz;
@@ -338,7 +396,7 @@ public final class CityLayout {
                         }
                     }
                     deckTop = top;
-                    deckBottom = baseTop - THICK + 1;
+                    deckBottom = bottom;
                 }
             }
         }
