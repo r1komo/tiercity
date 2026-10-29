@@ -30,7 +30,7 @@ public final class TierCityEvents {
         int[] d = CityLayout.nearestDeck(params, seed, params.spawnX(), params.spawnZ(), 2048);
         if (d == null) return;
 
-        event.getSettings().setSpawn(new BlockPos(d[0], d[2] + 1, d[1]), 90.0F);
+        event.getSettings().setSpawn(new BlockPos(d[0], d[2], d[1]), 90.0F);
         event.setCanceled(true);
     }
 
@@ -59,17 +59,17 @@ public final class TierCityEvents {
             if (q.hasDeck()) {
                 tx = qx;
                 tz = qz;
-                ty = q.deckTop();
+                ty = q.standY();
             }
         }
 
         for (ItemEntity item : event.getDrops()) {
-            item.setPos(tx + 0.5 + (level.random.nextDouble() - 0.5) * 0.8, ty + 1.0,
+            item.setPos(tx + 0.5 + (level.random.nextDouble() - 0.5) * 0.8, ty,
                     tz + 0.5 + (level.random.nextDouble() - 0.5) * 0.8);
             item.setDeltaMovement(Vec3.ZERO);
             item.setUnlimitedLifetime();
             item.setInvulnerable(true);
         }
-        player.sendSystemMessage(Component.translatable("message.tiercity.items_recovered", tx, ty + 1, tz));
+        player.sendSystemMessage(Component.translatable("message.tiercity.items_recovered", tx, ty, tz));
     }
 }
