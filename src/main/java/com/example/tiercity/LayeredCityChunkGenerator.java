@@ -57,12 +57,24 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                 for (int lz = 0; lz < 16; lz++) {
                     int wx = minX + lx, wz = minZ + lz;
                     CityLayout.Column col = CityLayout.column(params, seed, wx, wz);
-                    if (!col.hasDeck() && !col.hasPillar()) continue;
-                    int top = col.topSolid();
-                    for (int y = col.bottomSolid(); y <= top; y++) {
-                        BlockState s = CityLayout.block(seed, col, wx, y, wz);
-                        if (!s.isAir()) {
-                            chunk.setBlockState(pos.set(wx, y, wz), s, false);
+                    if (col.isEmpty()) continue;
+                    // 판은 층별로, 기둥은 그 위에 덮어쓴다(기둥이 아래층 판을 관통)
+                    for (CityLayout.Layer layer : col.layers()) {
+                        if (layer == null) continue;
+                        for (int y = layer.bottom(); y <= layer.maxY(); y++) {
+                            BlockState s = CityLayout.deckBlock(seed, layer, wx, y, wz);
+                            if (!s.isAir()) {
+                                chunk.setBlockState(pos.set(wx, y, wz), s, false);
+                            }
+                        }
+                    }
+                    if (col.hasPillar()) {
+                        int topY = Math.min(CityLayout.MIN_Y + CityLayout.HEIGHT - 1, Math.max(col.pillarTop(), col.rebarTop()));
+                        for (int y = CityLayout.MIN_Y; y <= topY; y++) {
+                            BlockState s = CityLayout.pillarBlock(seed, col, wx, y, wz);
+                            if (!s.isAir()) {
+                                chunk.setBlockState(pos.set(wx, y, wz), s, false);
+                            }
                         }
                     }
                 }
@@ -102,6 +114,7 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
 
     @Override
     public void addDebugScreenInfo(List<String> info, RandomState random, BlockPos pos) {
-        info.add("TierCity radius=" + TierCityConfig.params().radius());
+        CityLayout.Params p = TierCityConfig.params();
+        info.add("TierCity radius=" + p.radius() + " layers=" + p.layers());
     }
 }

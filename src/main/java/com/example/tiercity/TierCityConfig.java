@@ -7,6 +7,8 @@ public final class TierCityConfig {
     public static final ForgeConfigSpec SPEC;
 
     private static final ForgeConfigSpec.IntValue RADIUS;
+    private static final ForgeConfigSpec.IntValue TOP_RADIUS;
+    private static final ForgeConfigSpec.IntValue LAYERS;
     private static final ForgeConfigSpec.IntValue SPAWN_X;
     private static final ForgeConfigSpec.IntValue SPAWN_Z;
     private static final ForgeConfigSpec.IntValue FRAGMENT_SIZE;
@@ -24,11 +26,15 @@ public final class TierCityConfig {
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
-        RADIUS = b.comment("Radius of the giant disc in blocks (centered on world origin). 80000 is about 15 in-game days on foot. Use ~3000 for testing.")
+        RADIUS = b.comment("Radius of the lowest (largest) layer in blocks, centered on the world origin. 80000 is about 15 in-game days on foot. Use ~3000 for testing.")
                 .defineInRange("radius", 80000, 1000, 29000000);
-        SPAWN_X = b.comment("World spawn X. Snapped to the nearest remaining deck.")
+        TOP_RADIUS = b.comment("Radius of the topmost layer. Radii of the layers in between decrease logarithmically from 'radius' to this value.")
+                .defineInRange("topRadius", 4000, 300, 29000000);
+        LAYERS = b.comment("Number of stacked layers (1-4). Layers are 160 blocks apart and the dimension is 768 blocks tall.")
+                .defineInRange("layers", 4, 1, 4);
+        SPAWN_X = b.comment("World spawn X (always on the lowest layer). Snapped to the nearest remaining deck. Upper layers have a large opening above this point.")
                 .defineInRange("spawnX", 300, -29000000, 29000000);
-        SPAWN_Z = b.comment("World spawn Z. Snapped to the nearest remaining deck.")
+        SPAWN_Z = b.comment("World spawn Z.")
                 .defineInRange("spawnZ", 0, -29000000, 29000000);
         FRAGMENT_SIZE = b.comment("Average fragment size in blocks (96 = 6 chunks).")
                 .defineInRange("fragmentSize", 96, 32, 512);
@@ -40,13 +46,13 @@ public final class TierCityConfig {
                 .defineInRange("bigStepChance", 0.03D, 0.0D, 1.0D);
         REMOVAL_BASE = b.comment("Base chance that a fragment is missing (varies with clustering noise). Keep below ~0.3 to stay walkable.")
                 .defineInRange("removalBase", 0.12D, 0.0D, 0.4D);
-        REMOVAL_RIM = b.comment("Extra removal chance near the rim of the disc.")
+        REMOVAL_RIM = b.comment("Extra removal chance near the rim of each layer.")
                 .defineInRange("removalRim", 0.35D, 0.0D, 0.8D);
         CRACK_HALF_MAX = b.comment("Maximum half-width of cracks between fragments (blocks).")
                 .defineInRange("crackHalfMax", 2.0D, 0.5D, 6.0D);
         CRACK_CHANCE = b.comment("Average chance that a border between two fragments is cracked (clustered).")
                 .defineInRange("crackChance", 0.2D, 0.0D, 1.0D);
-        TERRAIN_AMP = b.comment("Amplitude (blocks) of the broad, gentle height undulation of the plate.")
+        TERRAIN_AMP = b.comment("Amplitude (blocks) of the broad, gentle height undulation of the plates.")
                 .defineInRange("terrainAmp", 10.0D, 0.0D, 30.0D);
         TILT_MAX = b.comment("Maximum tilt of a single fragment (blocks of height per block of width).")
                 .defineInRange("tiltMax", 0.06D, 0.0D, 0.2D);
@@ -64,7 +70,7 @@ public final class TierCityConfig {
             return new CityLayout.Params(RADIUS.get(), SPAWN_X.get(), SPAWN_Z.get(), FRAGMENT_SIZE.get(),
                     HEIGHT_RANGE.get(), BIG_STEP.get(), BIG_PROB.get(), REMOVAL_BASE.get(),
                     REMOVAL_RIM.get(), CRACK_HALF_MAX.get(), CRACK_CHANCE.get(), TERRAIN_AMP.get(), TILT_MAX.get(),
-                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get());
+                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get(), LAYERS.get(), TOP_RADIUS.get());
         } catch (IllegalStateException e) {
             return CityLayout.Params.DEFAULT;
         }
