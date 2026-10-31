@@ -68,6 +68,11 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                             }
                         }
                     }
+                    for (int ry : col.rodY()) {
+                        if (ry < 0) continue;
+                        chunk.setBlockState(pos.set(wx, ry, wz), CityLayout.rodBlock(), false);
+                        chunk.setBlockState(pos.set(wx, ry + 1, wz), CityLayout.rodBlock(), false);
+                    }
                     if (col.hasPillar()) {
                         int topY = Math.min(CityLayout.MIN_Y + CityLayout.HEIGHT - 1, Math.max(col.pillarTop(), col.rebarTop()));
                         for (int y = CityLayout.MIN_Y; y <= topY; y++) {
