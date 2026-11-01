@@ -44,9 +44,9 @@ public final class CityLayout {
     public record Params(int radius, int spawnX, int spawnZ, int fragmentSize, int heightRange,
                          int bigStep, double bigProb, double removalBase, double removalRim,
                          double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
-                         double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance) {
+                         double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax) {
         public static final Params DEFAULT =
-                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75);
+                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0);
 
         /** k층(0 = 최하층)의 반지름: R(k) = R0 - b*ln(1+k), 최상층에서 topRadius. */
         public double layerRadius(int k) {
@@ -215,7 +215,7 @@ public final class CityLayout {
 
     // ---------------- 조각 속성(층별) ----------------
     /** 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부. 절반은 모든 층이 공유(빛 우물), 절반은 층마다 독립. */
-    private static int removalKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+    private static int rawKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
         double dist = Math.sqrt(sx * sx + sz * sz);
         if (k == 0) {
             if (dist < PROTECT_R) return 0;
@@ -225,10 +225,58 @@ public final class CityLayout {
         double n = 0.65 * noise(seed, sx, sz, 3072.0, 21) + 0.35 * noise(seed, sx, sz, 768.0, 22);
         double t = Math.max(0.0, Math.min(1.0, (dist / rk - 0.75) / 0.25));
         double rim = t * t * (3 - 2 * t);
-        double prob = p.removalBase() * (0.2 + 1.6 * n) + p.removalRim() * rim;
+        double prob = p.removalBase() * (0.5 + n) + p.removalRim() * rim;
         boolean shared = hash01(seed, i, j, 16) < prob * 0.5;
         boolean indep = hash01(seed, i, j, 16 + 1000 * (k + 1)) < prob * 0.5;
         return (shared || indep) ? 1 : 0;
+    }
+
+    private static final ThreadLocal<java.util.HashMap<Long, Byte>> KIND_CACHE = ThreadLocal.withInitial(java.util.HashMap::new);
+
+    private static boolean rawRemoved(Params p, long seed, int k, int S, int ci, int cj, double rk) {
+        double sx = centerU(seed, S, ci, cj), sz = (cj + 0.5) * S;
+        return rawKind(p, seed, k, ci, cj, sx, sz, rk) != 0;
+    }
+
+    /** 이웃(좌우 + 위아래 줄의 겹치는 칸) 중 (상한 적용 전) 탈락 후보인 칸의 수. */
+    private static int removedNeighbors(Params p, long seed, int k, int i, int j, double rk) {
+        int S = p.fragmentSize();
+        double w = rowW(seed, j, S);
+        double sx = centerU(seed, S, i, j);
+        int cnt = 0;
+        if (rawRemoved(p, seed, k, S, i - 1, j, rk)) cnt++;
+        if (rawRemoved(p, seed, k, S, i + 1, j, rk)) cnt++;
+        for (int dj = -1; dj <= 1; dj += 2) {
+            int row = j + dj;
+            int last = Integer.MIN_VALUE;
+            for (int d = -1; d <= 1; d += 2) {
+                int ci = cellIndex(seed, S, sx + d * w / 4.0, row);
+                if (ci == last) continue;
+                last = ci;
+                if (rawRemoved(p, seed, k, S, ci, row, rk)) cnt++;
+            }
+        }
+        return cnt;
+    }
+
+    /**
+     * 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부.
+     * 탈락 후보가 서로 뭉쳐서 큰 구멍이 되지 않도록, 이웃 후보가 holeMax개를 넘으면 대부분 복구한다(구멍은 1~2조각 크기).
+     */
+    private static int removalKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+        java.util.HashMap<Long, Byte> cache = KIND_CACHE.get();
+        long key = seed ^ (i * 0x9E3779B97F4A7C15L) ^ (j * 0xC2B2AE3D27D4EB4FL) ^ (k * 0x165667B19E3779F9L)
+                ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L);
+        Byte cached = cache.get(key);
+        if (cached != null) return cached;
+        int r = rawKind(p, seed, k, i, j, sx, sz, rk);
+        if (r == 1 && removedNeighbors(p, seed, k, i, j, rk) > p.holeMax()
+                && hash01(seed, i, j, 18 + 1000 * (k + 1)) < 0.85) {
+            r = 0;
+        }
+        if (cache.size() > 40000) cache.clear();
+        cache.put(key, (byte) r);
+        return r;
     }
 
     private static boolean computeRemoved(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {

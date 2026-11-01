@@ -24,6 +24,7 @@ public final class TierCityConfig {
     private static final ForgeConfigSpec.DoubleValue TALUS_CHANCE;
     private static final ForgeConfigSpec.IntValue TALUS_MAX_HEIGHT;
     private static final ForgeConfigSpec.DoubleValue DEBRIS_CHANCE;
+    private static final ForgeConfigSpec.IntValue HOLE_MAX;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -63,6 +64,8 @@ public final class TierCityConfig {
                 .defineInRange("talusMaxHeight", 5, 1, 12);
         DEBRIS_CHANCE = b.comment("Chance that a fallen (missing) fragment has left debris on the layer below it.")
                 .defineInRange("debrisChance", 0.75D, 0.0D, 1.0D);
+        HOLE_MAX = b.comment("Limits the size of holes: a missing fragment keeps being missing only if at most this many of its neighbours are also missing. 0 = single-fragment holes, 1 = up to two fragments, higher = bigger holes.")
+                .defineInRange("holeMaxNeighbors", 0, 0, 6);
         SPEC = b.build();
     }
 
@@ -73,7 +76,7 @@ public final class TierCityConfig {
             return new CityLayout.Params(RADIUS.get(), SPAWN_X.get(), SPAWN_Z.get(), FRAGMENT_SIZE.get(),
                     HEIGHT_RANGE.get(), BIG_STEP.get(), BIG_PROB.get(), REMOVAL_BASE.get(),
                     REMOVAL_RIM.get(), CRACK_HALF_MAX.get(), CRACK_CHANCE.get(), TERRAIN_AMP.get(), TILT_MAX.get(),
-                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get(), LAYERS.get(), TOP_RADIUS.get(), DEBRIS_CHANCE.get());
+                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get(), LAYERS.get(), TOP_RADIUS.get(), DEBRIS_CHANCE.get(), HOLE_MAX.get());
         } catch (IllegalStateException e) {
             return CityLayout.Params.DEFAULT;
         }
