@@ -141,6 +141,12 @@ public final class CityLayout {
     private static final BlockState PILLAR = Blocks.POLISHED_ANDESITE.defaultBlockState();
     private static final BlockState RAMP_SLAB = Blocks.POLISHED_ANDESITE_SLAB.defaultBlockState();
     private static final BlockState REBAR = Blocks.RAW_IRON_BLOCK.defaultBlockState();
+    private static final BlockState PANEL_LIT = Blocks.SEA_LANTERN.defaultBlockState();
+    private static final BlockState PANEL_OFF = Blocks.BLACK_CONCRETE.defaultBlockState();
+    private static final BlockState PANEL_MIRROR = Blocks.IRON_BLOCK.defaultBlockState();
+    private static final BlockState PANEL_SEAM = Blocks.POLISHED_BLACKSTONE.defaultBlockState();
+
+    public static final int PANEL = 16;            // 하늘 패널 한 변(이음새 1칸 별도)
 
     private CityLayout() {}
 
@@ -823,8 +829,35 @@ public final class CityLayout {
         return CRACKED;
     }
 
+    /** 패널 종류: 0 = 켜짐, 1 = 꺼짐, 2 = 반사판, 3 = 떨어져 나감. 구역별로 몰려서 나타난다. */
+    static int panelKind(long seed, int k, int pi, int pj) {
+        double n = noise(seed, pi * (PANEL + 1.0), pj * (PANEL + 1.0), 220.0, 501 + k);
+        double u = hash01(seed, pi, pj, 502 + k);
+        if (hash01(seed, pi, pj, 503 + k) < 0.07) return 3;
+        double v = 0.55 * u + 0.45 * n;
+        if (v < 0.38) return 1;
+        if (v < 0.48) return 2;
+        return 0;
+    }
+
+    /** 위층 판의 아랫면(아래층에서 올려다보면 하늘): 패널이 격자로 깔려 있다. 최하층 아랫면은 그냥 콘크리트. */
+    private static BlockState underside(long seed, Layer l, int x, int y, int z) {
+        int k = (int) Math.round((double) (l.bottom() + THICK - 1 - LEVEL_BASE) / LAYER_SPACING);
+        if (k < 1 || y > l.bottom() + 1) return null;
+        int pi = Math.floorDiv(x, PANEL + 1), pj = Math.floorDiv(z, PANEL + 1);
+        int kind = panelKind(seed, k, pi, pj);
+        if (kind == 3) return AIR;                 // 떨어져 나간 패널: 2칸 움푹 들어가 안쪽 콘크리트가 보임
+        if (y != l.bottom()) return null;
+        if (Math.floorMod(x, PANEL + 1) == PANEL || Math.floorMod(z, PANEL + 1) == PANEL) return PANEL_SEAM;
+        return kind == 0 ? PANEL_LIT : (kind == 1 ? PANEL_OFF : PANEL_MIRROR);
+    }
+
     public static BlockState deckBlock(long seed, Layer l, int x, int y, int z) {
         if (y < l.bottom() || y > l.maxY()) return AIR;
+        if (y <= l.bottom() + 1 && l.top() - l.bottom() >= 3) {
+            BlockState u = underside(seed, l, x, y, z);
+            if (u != null) return u;
+        }
         if (l.debris() > 0 && y > l.top()) {
             // 위층에서 떨어진 판 조각: 판과 같은 콘크리트
             if (y == l.top() + l.debris()) {
