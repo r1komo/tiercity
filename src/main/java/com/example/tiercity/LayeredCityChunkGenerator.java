@@ -58,6 +58,17 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                     int wx = minX + lx, wz = minZ + lz;
                     CityLayout.Column col = CityLayout.column(params, seed, wx, wz);
                     if (col.isEmpty()) continue;
+                    if (col.hasTower()) {
+                        // 탑 자리: 탑이 판/철근보다 우선하므로 한 칸씩 합쳐서 채운다
+                        int topY = Math.min(CityLayout.MIN_Y + CityLayout.HEIGHT - 1, col.topSolid());
+                        for (int y = CityLayout.MIN_Y; y <= topY; y++) {
+                            BlockState s = CityLayout.block(seed, col, wx, y, wz);
+                            if (!s.isAir()) {
+                                chunk.setBlockState(pos.set(wx, y, wz), s, false);
+                            }
+                        }
+                        continue;
+                    }
                     // 판은 층별로, 기둥은 그 위에 덮어쓴다(기둥이 아래층 판을 관통)
                     for (CityLayout.Layer layer : col.layers()) {
                         if (layer == null) continue;
