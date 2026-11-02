@@ -34,7 +34,7 @@ public final class TierCityConfig {
                 .defineInRange("topRadius", 4000, 300, 29000000);
         LAYERS = b.comment("Number of stacked layers (1-4). Layers are 160 blocks apart and the dimension is 768 blocks tall.")
                 .defineInRange("layers", 4, 1, 4);
-        SPAWN_X = b.comment("World spawn X (always on the lowest layer). Snapped to the nearest remaining deck. Upper layers have a large opening above this point.")
+        SPAWN_X = b.comment("World spawn X (always on the lowest layer). Snapped to the nearest remaining deck. ")
                 .defineInRange("spawnX", 300, -29000000, 29000000);
         SPAWN_Z = b.comment("World spawn Z.")
                 .defineInRange("spawnZ", 0, -29000000, 29000000);

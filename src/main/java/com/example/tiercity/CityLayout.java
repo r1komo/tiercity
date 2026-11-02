@@ -11,7 +11,7 @@ import java.util.Arrays;
  *
  *  - 층: 월드 원점 중심의 원판이 최대 4겹. 반지름은 위로 갈수록 로그 함수꼴로 줄어든다(Params.layerRadius).
  *  - 조각: 휘어진 격자(줄마다 어긋나고 폭이 다른 사각형, 경계선이 완만히 휘어 있음). 모든 층이 같은 조각 배치를 공유한다.
- *  - 구멍: 일부는 모든 층이 공유(빛 우물), 나머지는 층마다 독립. 위층에는 스폰 위쪽에 큰 개구부.
+ *  - 구멍: 층마다 독립. 이웃 조각과 뭉치지 않아 대개 조각 하나 크기.
  *  - 높이/균열/잔해 비탈: 층마다 독립. 아랫면은 조각과 무관하게 이어지고 윗면만 조각별로 오르내린다.
  *  - 탑: 768 간격 격자. 위층까지 닿는 자리의 기둥은 모두 속이 빈 탑이다(벽 + 중심 기둥 + 나선 경사로).
  *    층마다 출입구가 있고, 탑 주변 판은 평평한 광장으로 남는다. 일부 탑은 벽이 뜯겨 있고 그중 일부는 경사로가 끊겨 있다.
@@ -47,7 +47,7 @@ public final class CityLayout {
     public static final int REBAR_DIST = 24;       // 철근 묶음이 기둥 중심에서 떨어진 거리(4방향)
 
     public static final int PROTECT_R = 800;       // 최하층 중심 보호 반경: 조각이 제거되지 않음
-    public static final int SKY_R = 600;           // 위층의 스폰 위쪽 개구부 반경
+    public static final int SKY_R = 600;           // 스폰 주변 보호 반경(잔해를 두지 않음)
     public static final double TALUS_MAX_NEIGHBORS = 1;   // (설명용) 조각마다 비탈이 생기는 방향은 하나
 
     /** 설정 파일에서 읽어 온 값. radius는 최하층 반지름. */
@@ -246,8 +246,6 @@ public final class CityLayout {
         double dist = Math.sqrt(sx * sx + sz * sz);
         if (k == 0) {
             if (dist < PROTECT_R) return 0;
-        } else if (Math.hypot(sx - p.spawnX(), sz - p.spawnZ()) < SKY_R) {
-            return 2;
         }
         double n = 0.65 * noise(seed, sx, sz, 3072.0, 21) + 0.35 * noise(seed, sx, sz, 768.0, 22);
         double t = Math.max(0.0, Math.min(1.0, (dist / rk - 0.75) / 0.25));
