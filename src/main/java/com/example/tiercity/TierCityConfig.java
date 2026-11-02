@@ -47,9 +47,9 @@ public final class TierCityConfig {
         BIG_PROB = b.comment("Chance that a fragment sits on a rare large fault.")
                 .defineInRange("bigStepChance", 0.03D, 0.0D, 1.0D);
         REMOVAL_BASE = b.comment("Base chance that a fragment is missing (varies with clustering noise). Keep below ~0.3 to stay walkable.")
-                .defineInRange("removalBase", 0.12D, 0.0D, 0.4D);
+                .defineInRange("removalBase", 0.08D, 0.0D, 0.4D);
         REMOVAL_RIM = b.comment("Extra removal chance near the rim of each layer.")
-                .defineInRange("removalRim", 0.35D, 0.0D, 0.8D);
+                .defineInRange("removalRim", 0.25D, 0.0D, 0.8D);
         CRACK_HALF_MAX = b.comment("Maximum half-width of cracks between fragments (blocks).")
                 .defineInRange("crackHalfMax", 2.0D, 0.5D, 6.0D);
         CRACK_CHANCE = b.comment("Average chance that a border between two fragments is cracked (clustered).")

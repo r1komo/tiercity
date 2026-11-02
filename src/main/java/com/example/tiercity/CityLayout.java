@@ -46,7 +46,7 @@ public final class CityLayout {
                          double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
                          double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax) {
         public static final Params DEFAULT =
-                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.12, 0.35, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0);
+                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0);
 
         /** k층(0 = 최하층)의 반지름: R(k) = R0 - b*ln(1+k), 최상층에서 topRadius. */
         public double layerRadius(int k) {
@@ -214,7 +214,7 @@ public final class CityLayout {
     }
 
     // ---------------- 조각 속성(층별) ----------------
-    /** 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부. 절반은 모든 층이 공유(빛 우물), 절반은 층마다 독립. */
+    /** 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부. 구멍은 층마다 독립. */
     private static int rawKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
         double dist = Math.sqrt(sx * sx + sz * sz);
         if (k == 0) {
@@ -226,9 +226,7 @@ public final class CityLayout {
         double t = Math.max(0.0, Math.min(1.0, (dist / rk - 0.75) / 0.25));
         double rim = t * t * (3 - 2 * t);
         double prob = p.removalBase() * (0.5 + n) + p.removalRim() * rim;
-        boolean shared = hash01(seed, i, j, 16) < prob * 0.5;
-        boolean indep = hash01(seed, i, j, 16 + 1000 * (k + 1)) < prob * 0.5;
-        return (shared || indep) ? 1 : 0;
+        return hash01(seed, i, j, 16 + 1000 * (k + 1)) < prob ? 1 : 0;   // 구멍은 층마다 독립
     }
 
     private static final ThreadLocal<java.util.HashMap<Long, Byte>> KIND_CACHE = ThreadLocal.withInitial(java.util.HashMap::new);
@@ -327,27 +325,32 @@ public final class CityLayout {
     }
 
     /** 이웃(좌우 + 위아래 줄의 겹치는 칸) 중 남은 조각이 2개 미만이면 외딴 조각(떠 있는 섬). */
-    private static boolean isolated(Params p, long seed, int k, Hit h, double rk) {
+    private static boolean isolatedCell(Params p, long seed, int k, int ci, int cj, double rk) {
         int S = p.fragmentSize();
         int present = 0;
-        if (cellPresent(p, seed, k, S, h.i - 1, h.j, rk)) present++;
-        if (cellPresent(p, seed, k, S, h.i + 1, h.j, rk)) present++;
+        if (cellPresent(p, seed, k, S, ci - 1, cj, rk)) present++;
+        if (cellPresent(p, seed, k, S, ci + 1, cj, rk)) present++;
         if (present >= 2) return false;
-        double w = rowW(seed, h.j, S);
+        double w = rowW(seed, cj, S);
+        double sx = centerU(seed, S, ci, cj);
         for (int dj = -1; dj <= 1; dj += 2) {
-            int row = h.j + dj;
+            int row = cj + dj;
             int last = Integer.MIN_VALUE;
-            for (int s = -1; s <= 1; s += 2) {
-                int ci = cellIndex(seed, S, h.sx + s * w / 4.0, row);
-                if (ci == last) continue;
-                last = ci;
-                if (cellPresent(p, seed, k, S, ci, row, rk)) {
+            for (int d = -1; d <= 1; d += 2) {
+                int c2 = cellIndex(seed, S, sx + d * w / 4.0, row);
+                if (c2 == last) continue;
+                last = c2;
+                if (cellPresent(p, seed, k, S, c2, row, rk)) {
                     present++;
                     if (present >= 2) return false;
                 }
             }
         }
         return true;
+    }
+
+    private static boolean isolated(Params p, long seed, int k, Hit h, double rk) {
+        return isolatedCell(p, seed, k, h.i, h.j, rk);
     }
 
     private static long pairKey(long seed, int k, int ai, int aj, int bi, int bj) {
@@ -382,9 +385,10 @@ public final class CityLayout {
     private static final double DEBRIS_CLEAR_R = SKY_R + 150;   // 스폰 주변에는 잔해를 두지 않음
 
     /** 떨어져 나간 자리로 뻗은 2칸 굵기 철근의 높이(없으면 -1). limited가 false면 길이 제한 없이(깎여 나간 가장자리용). */
-    private static int rodAt(long seed, int k, long key, Hit h, int bottom, int top, boolean limited) {
+    private static int rodAt(long seed, int k, long key, Hit h, int wx, int wz, int bottom, int top, boolean limited) {
         double shift = ((key >>> 11) & 0xFFFF) / 65535.0 * 9.0;
-        double tt = (h.t + shift) / 9.0;
+        double lateral = (h.dir <= 1 ? wz : wx) + 0.5;   // 경계를 가로지르는 축 방향의 직선(월드 좌표)
+        double tt = (lateral + shift) / 9.0;
         int seg = (int) Math.floor(tt);
         double f = tt - seg;
         if (f >= 2.0 / 9.0) return -1;
@@ -397,13 +401,31 @@ public final class CityLayout {
     }
 
     private static Layer computeLayer(Params p, long seed, int k, Hit h, int wx, int wz, LayerInfo info) {
+        return computeLayer(p, seed, k, h, wx, wz, info, true);
+    }
+
+    /** 철근 한 줄이 경계 너머 실제 판에 붙어 있는지: 경계 쪽으로 직선을 따라 가며 판이 철근 높이에 걸쳐 있는지 확인. */
+    private static boolean rodAnchored(Params p, long seed, int k, Hit h, int wx, int wz, int ry) {
+        int dx = h.dir == 0 ? 1 : (h.dir == 1 ? -1 : 0);
+        int dz = h.dir == 2 ? 1 : (h.dir == 3 ? -1 : 0);
+        int s0 = (int) Math.ceil(h.e);
+        for (int s = s0; s <= s0 + 2; s++) {
+            int x = wx + dx * s, z = wz + dz * s;
+            Hit hh = locate(seed, p.fragmentSize(), x, z);
+            Layer l = computeLayer(p, seed, k, hh, x, z, new LayerInfo(), false);
+            if (l != null && ry >= l.bottom() && ry + 1 <= l.top()) return true;
+        }
+        return false;
+    }
+
+    private static Layer computeLayer(Params p, long seed, int k, Hit h, int wx, int wz, LayerInfo info, boolean checkAnchor) {
         double rk = p.layerRadius(k);
         double r2 = (double) wx * wx + (double) wz * wz;
         if (r2 > rk * rk) return null;
         Frag fa = new Frag(p, seed, k, h.i, h.j, h.sx, h.sz, rk);
         boolean culled = !fa.removed && isolated(p, seed, k, h, rk);
         Frag fb = new Frag(p, seed, k, h.bi, h.bj, h.bsx, h.bsz, rk);
-        boolean bPresent = !fb.removed;
+        boolean bPresent = !fb.removed && Math.hypot(h.bsx, h.bsz) <= rk && !isolatedCell(p, seed, k, h.bi, h.bj, rk);
         long key = pairKey(seed, k, h.i, h.j, h.bi, h.bj);
 
         // 아랫면은 조각과 무관하게 이어진다(완만한 기복만 따라감). 윗면이 올라간 조각은 두꺼워져서 떠 보이지 않는다.
@@ -420,7 +442,9 @@ public final class CityLayout {
                         && hash01(seed, h.i, h.j, 311 + 1000 * k) < p.debrisChance();
                 if (bPresent) {
                     int topB = Math.max(fb.heightAt(wx, wz), minTop);
-                    info.rodY = rodAt(seed, k, key, h, bottom, topB, true);
+                    int ry = rodAt(seed, k, key, h, wx, wz, bottom, topB, true);
+                    if (ry >= 0 && checkAnchor && !rodAnchored(p, seed, k, h, wx, wz, ry)) ry = -1;
+                    info.rodY = ry;
                 }
             }
             return null;
@@ -432,8 +456,10 @@ public final class CityLayout {
         if (!bPresent) {
             double er = 3.0 * noise(seed, wx, wz, 7.0, 341 + 100 * k) + (noise(seed, wx, wz, 3.0, 342 + 100 * k) - 0.5);
             if (h.e < er) {
-                if (fb.kind == 1) info.rodY = rodAt(seed, k, key, h, bottom, topA, false);
-                return null;
+                // 철근이 뻗어 나가는 줄 위에서는 가장자리를 깎지 않는다(철근이 허공에 뜨지 않고 판에 바로 붙도록)
+                boolean bFallen = fb.kind == 1 || (!fb.removed && isolatedCell(p, seed, k, h.bi, h.bj, rk));   // 탈락했거나 외딴 조각이라 함께 떨어져 나간 이웃
+                boolean rodLine = bFallen && rodAt(seed, k, key, h, wx, wz, bottom, topA, false) >= 0;
+                if (!rodLine) return null;
             }
         }
         if (bPresent && isCrack(p, seed, k, key, fa, fb, h.e)) return null;
