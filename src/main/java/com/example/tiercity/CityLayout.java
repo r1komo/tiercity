@@ -1,0 +1,955 @@
+package com.example.tiercity;
+
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.Arrays;
+
+/**
+ * 층상 도시 레이아웃 (v2 = 빌드 2a).
+ * (params, seed, x, z) -> 컬럼 사양을 돌려주는 순수 함수 집합. 청크 경계와 무관하게 항상 같은 결과.
+ *
+ *  - 층: 월드 원점 중심의 원판이 최대 4겹. 반지름은 위로 갈수록 로그 함수꼴로 줄어든다(Params.layerRadius).
+ *  - 조각: 휘어진 격자(줄마다 어긋나고 폭이 다른 사각형, 경계선이 완만히 휘어 있음). 모든 층이 같은 조각 배치를 공유한다.
+ *  - 구멍: 층마다 독립. 이웃 조각과 뭉치지 않아 대개 조각 하나 크기.
+ *  - 높이/균열/잔해 비탈: 층마다 독립. 아랫면은 조각과 무관하게 이어지고 윗면만 조각별로 오르내린다.
+ *  - 탑: 768 간격 격자. 위층까지 닿는 자리의 기둥은 모두 속이 빈 탑이다(벽 + 중심 기둥 + 나선 경사로).
+ *    층마다 출입구가 있고, 탑 주변 판은 평평한 광장으로 남는다. 일부 탑은 벽이 뜯겨 있고 그중 일부는 경사로가 끊겨 있다.
+ *  - 기둥: 최하층만 덮는 자리의 기둥은 속이 찬 기둥이다. 일부는 기울어져 있고, 판이 없는 자리에서는 부러져 철근이 솟아 있다.
+ * 지면은 없다. 인공 계단은 없다.
+ */
+public final class CityLayout {
+    public static final int MIN_Y = 0;
+    public static final int HEIGHT = 768;
+
+    public static final int LEVEL_BASE = 128;      // 최하층 판 윗면 기준 y
+    public static final int LAYER_SPACING = 160;   // 층 간격
+    public static final int MAX_LAYERS = 4;
+    public static final int THICK = 16;            // 판 기준 두께(아랫면은 이어지고 윗면만 조각별로 오르내림)
+    public static final int MIN_THICK = 5;         // 가장 낮게 가라앉은 곳의 최소 두께
+
+    public static final int PILLAR_SPACING = 768;  // 탑/기둥 격자 간격
+    public static final int PILLAR_R = 40;         // 탑/기둥 맨 위 바깥 반지름
+    public static final double PILLAR_TAPER = 0.025;   // 아래로 내려갈수록 늘어나는 반지름(블록당)
+    public static final int PILLAR_MAX_R = 58;
+
+    public static final int TOWER_RI = 34;         // 탑 안쪽(벽 안) 반지름
+    public static final int TOWER_RC = 18;         // 중심 기둥 반지름
+    public static final int RAMP_PITCH = 48;       // 나선 경사로 한 바퀴에 오르는 높이
+    public static final int RAMP_THICK = 4;
+    public static final int DOOR_HALF_W = 7;       // 출입구 폭의 절반
+    public static final int DOOR_H = 8;
+    public static final int PLAZA_R = 84;          // 탑 주변 평평한 광장 반지름(탑 중심 기준)
+    public static final int PLAZA_BLEND = 28;      // 광장에서 주변 판 높이로 이어지는 구간
+    public static final int TILT_SPAN = 128;       // 기울어짐이 적용되는 위쪽 구간 길이
+    public static final int TILT_MARGIN = 13;      // 기울어진 기둥이 옆으로 밀려나는 최대 거리 + 여유
+    public static final double PIT_THRESHOLD = 0.84;   // 값이 클수록 기둥 표면 파임이 드묾
+    public static final int REBAR_DIST = 24;       // 철근 묶음이 기둥 중심에서 떨어진 거리(4방향)
+
+    public static final int PROTECT_R = 800;       // 최하층 중심 보호 반경: 조각이 제거되지 않음
+    public static final int SKY_R = 600;           // 스폰 주변 보호 반경(잔해를 두지 않음)
+    public static final double TALUS_MAX_NEIGHBORS = 1;   // (설명용) 조각마다 비탈이 생기는 방향은 하나
+
+    /** 설정 파일에서 읽어 온 값. radius는 최하층 반지름. */
+    public record Params(int radius, int spawnX, int spawnZ, int fragmentSize, int heightRange,
+                         int bigStep, double bigProb, double removalBase, double removalRim,
+                         double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
+                         double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax) {
+        public static final Params DEFAULT =
+                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0);
+
+        /** k층(0 = 최하층)의 반지름: R(k) = R0 - b*ln(1+k), 최상층에서 topRadius. */
+        public double layerRadius(int k) {
+            if (layers <= 1) return radius;
+            double top = Math.min(topRadius, radius);
+            double b = (radius - top) / Math.log(layers);
+            return radius - b * Math.log(1 + k);
+        }
+    }
+
+    /** 기둥 하나의 고유 속성(좌표와 시드로 결정). */
+    static final class Pillar {
+        final int cx, cz;
+        final double slopeX, slopeZ;   // 위쪽 TILT_SPAN 구간에서 아래로 갈수록 밀려나는 비율
+        final int brk;                 // 부러진 깊이
+        final double planeA, planeB;   // 파단면 기울기
+        final double rebarAng;         // 철근 묶음 4개의 배치 회전각
+        Pillar(int cx, int cz, double slopeX, double slopeZ, int brk, double planeA, double planeB, double rebarAng) {
+            this.cx = cx; this.cz = cz; this.slopeX = slopeX; this.slopeZ = slopeZ;
+            this.brk = brk; this.planeA = planeA; this.planeB = planeB; this.rebarAng = rebarAng;
+        }
+    }
+
+    /** 층을 잇는 탑 하나의 고유 속성. */
+    static final class Tower {
+        final int cx, cz, topLayer, wallTop;
+        final boolean broken, rampGap;
+        final double tearAng, tearHalf, gapAng;
+        final int tearY0, tearY1;
+        Tower(int cx, int cz, int topLayer, boolean broken, double tearAng, double tearHalf, int tearY0, int tearY1,
+              boolean rampGap, double gapAng) {
+            this.cx = cx; this.cz = cz; this.topLayer = topLayer; this.wallTop = layerBase(topLayer);
+            this.broken = broken; this.tearAng = tearAng; this.tearHalf = tearHalf;
+            this.tearY0 = tearY0; this.tearY1 = tearY1; this.rampGap = rampGap; this.gapAng = gapAng;
+        }
+    }
+
+    /**
+     * 한 층의 판 한 컬럼. talus: 잔해 비탈(baseTop 위쪽이 돌무더기). slab: 맨 위에 반 블록 슬랩.
+     * debris: 위층에서 떨어진 판 조각이 그 위에 쌓인 높이(0이면 없음).
+     */
+    public record Layer(int top, int bottom, int baseTop, boolean talus, boolean slab, int debris) {
+        public int maxY() { return debris > 0 ? top + debris : top + (slab ? 1 : 0); }
+        /** 서 있을 수 있는 y(슬랩이면 슬랩 블록 위치, 잔해가 있으면 잔해 위). */
+        public int standY() { return maxY() + 1; }
+    }
+
+    /**
+     * layers[k] == null 이면 그 층에는 판이 없음. pillar != null 이면 기둥 후보 컬럼.
+     * rodY[k] >= 0 이면 k층의 떨어져 나간 자리로 뻗은 철근(그 높이와 위 한 칸, 2칸 굵기).
+     */
+    public record Column(Layer[] layers, int pillarTop, int rebarTop, Pillar pillar, int pillarYtop, int[] rodY, Tower tower) {
+        public boolean hasDeck() {
+            for (Layer l : layers) if (l != null) return true;
+            return false;
+        }
+        public boolean hasRod() {
+            for (int y : rodY) if (y >= 0) return true;
+            return false;
+        }
+        public boolean hasPillar() { return pillar != null; }
+        public boolean hasTower() { return tower != null; }
+        public boolean isEmpty() { return pillar == null && tower == null && !hasDeck() && !hasRod(); }
+        public int topSolid() {
+            int t = -1;
+            for (Layer l : layers) if (l != null) t = Math.max(t, l.maxY());
+            for (int y : rodY) if (y >= 0) t = Math.max(t, y + 1);
+            if (pillar != null) t = Math.max(t, Math.max(pillarTop, rebarTop));
+            if (tower != null) t = Math.max(t, tower.wallTop);
+            return t;
+        }
+    }
+
+    private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+    private static final BlockState ANDESITE = Blocks.ANDESITE.defaultBlockState();
+    private static final BlockState COBBLE = Blocks.COBBLESTONE.defaultBlockState();
+    private static final BlockState STONE = Blocks.STONE.defaultBlockState();
+    private static final BlockState CRACKED = Blocks.CRACKED_STONE_BRICKS.defaultBlockState();
+    private static final BlockState RUBBLE_SLAB = Blocks.COBBLESTONE_SLAB.defaultBlockState();
+    private static final BlockState DECK_TOP = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
+    private static final BlockState DECK_BODY = Blocks.GRAY_CONCRETE.defaultBlockState();
+    private static final BlockState PILLAR = Blocks.POLISHED_ANDESITE.defaultBlockState();
+    private static final BlockState RAMP_SLAB = Blocks.POLISHED_ANDESITE_SLAB.defaultBlockState();
+    private static final BlockState REBAR = Blocks.RAW_IRON_BLOCK.defaultBlockState();
+    private static final BlockState PANEL_LIT = Blocks.LIGHT_BLUE_CONCRETE.defaultBlockState();   // 모드 블록이 없을 때(시험용)
+
+    private CityLayout() {}
+
+    public static int layerBase(int k) { return LEVEL_BASE + k * LAYER_SPACING; }
+
+    // ---------------- 해시/노이즈 ----------------
+    private static long hash(long seed, int a, int b, int salt) {
+        long h = seed ^ (a * 0x9E3779B97F4A7C15L + b * 0xC2B2AE3D27D4EB4FL + salt * 0x165667B19E3779F9L);
+        h ^= h >>> 32;
+        h *= 0xD6E8FEB86659FD93L;
+        h ^= h >>> 32;
+        return h;
+    }
+
+    private static int rand(long seed, int a, int b, int salt, int bound) {
+        return (int) ((hash(seed, a, b, salt) >>> 33) % bound);
+    }
+
+    private static double hash01(long seed, int a, int b, int salt) {
+        return (hash(seed, a, b, salt) >>> 11) * (1.0 / (1L << 53));
+    }
+
+    private static double noise(long seed, double x, double z, double cell, int salt) {
+        double fx = x / cell, fz = z / cell;
+        int ix = (int) Math.floor(fx), iz = (int) Math.floor(fz);
+        double tx = fx - ix, tz = fz - iz;
+        tx = tx * tx * (3 - 2 * tx);
+        tz = tz * tz * (3 - 2 * tz);
+        double a = hash01(seed, ix, iz, salt), b = hash01(seed, ix + 1, iz, salt);
+        double c = hash01(seed, ix, iz + 1, salt), d = hash01(seed, ix + 1, iz + 1, salt);
+        return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    }
+
+    private static double noise3(long seed, double x, double y, double z, double cell, int salt) {
+        double fx = x / cell, fy = y / cell, fz = z / cell;
+        int ix = (int) Math.floor(fx), iy = (int) Math.floor(fy), iz = (int) Math.floor(fz);
+        double tx = fx - ix, ty = fy - iy, tz = fz - iz;
+        tx = tx * tx * (3 - 2 * tx);
+        ty = ty * ty * (3 - 2 * ty);
+        tz = tz * tz * (3 - 2 * tz);
+        double c000 = hash01(seed, ix, iz, iy * 131 + salt), c100 = hash01(seed, ix + 1, iz, iy * 131 + salt);
+        double c010 = hash01(seed, ix, iz + 1, iy * 131 + salt), c110 = hash01(seed, ix + 1, iz + 1, iy * 131 + salt);
+        double c001 = hash01(seed, ix, iz, (iy + 1) * 131 + salt), c101 = hash01(seed, ix + 1, iz, (iy + 1) * 131 + salt);
+        double c011 = hash01(seed, ix, iz + 1, (iy + 1) * 131 + salt), c111 = hash01(seed, ix + 1, iz + 1, (iy + 1) * 131 + salt);
+        double x00 = c000 * (1 - tx) + c100 * tx, x10 = c010 * (1 - tx) + c110 * tx;
+        double x01 = c001 * (1 - tx) + c101 * tx, x11 = c011 * (1 - tx) + c111 * tx;
+        double y0 = x00 * (1 - tz) + x10 * tz, y1 = x01 * (1 - tz) + x11 * tz;
+        return y0 * (1 - ty) + y1 * ty;
+    }
+
+    // ---------------- 휘어진 격자 조각 ----------------
+    private static double rowOff(long seed, int j, int S) { return hash01(seed, j, 0, 205) * S; }
+
+    private static double rowW(long seed, int j, int S) { return S * (0.8 + 0.6 * hash01(seed, j, 0, 206)); }
+
+    private static int cellIndex(long seed, int S, double u, int row) {
+        return (int) Math.floor((u + rowOff(seed, row, S)) / rowW(seed, row, S));
+    }
+
+    private static double centerU(long seed, int S, int i, int row) {
+        return (i + 0.5) * rowW(seed, row, S) - rowOff(seed, row, S);
+    }
+
+    /** 한 컬럼이 속한 조각(A), 가장 가까운 경계까지의 거리(e)와 그 너머의 조각(B). 층과 무관. */
+    private static final class Hit {
+        int i, j, bi, bj, dir;     // dir: 0=+x 1=-x 2=+z 3=-z (B 방향)
+        double sx, sz, bsx, bsz, e, t;
+    }
+
+    private static Hit locate(long seed, int S, int wx, int wz) {
+        double px = wx + 0.5, pz = wz + 0.5;
+        double u = px + 0.30 * S * (2 * noise(seed, px, pz, 230.0, 201) - 1) + 0.10 * S * (2 * noise(seed, px, pz, 70.0, 203) - 1);
+        double v = pz + 0.30 * S * (2 * noise(seed, px, pz, 230.0, 202) - 1) + 0.10 * S * (2 * noise(seed, px, pz, 70.0, 204) - 1);
+        int j = (int) Math.floor(v / S);
+        double w = rowW(seed, j, S);
+        double uu = u + rowOff(seed, j, S);
+        int i = (int) Math.floor(uu / w);
+        double dl = uu - i * w, dr = (i + 1) * w - uu, dd = v - j * S, du = (j + 1) * S - v;
+        double e = dl;
+        int dir = 1;
+        if (dr < e) { e = dr; dir = 0; }
+        if (dd < e) { e = dd; dir = 3; }
+        if (du < e) { e = du; dir = 2; }
+        Hit h = new Hit();
+        h.i = i; h.j = j; h.e = e; h.dir = dir;
+        switch (dir) {
+            case 0: h.bi = i + 1; h.bj = j; break;
+            case 1: h.bi = i - 1; h.bj = j; break;
+            case 2: h.bj = j + 1; h.bi = cellIndex(seed, S, u, h.bj); break;
+            default: h.bj = j - 1; h.bi = cellIndex(seed, S, u, h.bj); break;
+        }
+        h.t = dir <= 1 ? v : u;
+        h.sx = centerU(seed, S, i, j);
+        h.sz = (j + 0.5) * S;
+        h.bsx = centerU(seed, S, h.bi, h.bj);
+        h.bsz = (h.bj + 0.5) * S;
+        return h;
+    }
+
+    // ---------------- 조각 속성(층별) ----------------
+    /** 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부. 구멍은 층마다 독립. */
+    private static int rawKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+        double dist = Math.sqrt(sx * sx + sz * sz);
+        if (k == 0) {
+            if (dist < PROTECT_R) return 0;
+        }
+        double n = 0.65 * noise(seed, sx, sz, 3072.0, 21) + 0.35 * noise(seed, sx, sz, 768.0, 22);
+        double t = Math.max(0.0, Math.min(1.0, (dist / rk - 0.75) / 0.25));
+        double rim = t * t * (3 - 2 * t);
+        double prob = p.removalBase() * (0.5 + n) + p.removalRim() * rim;
+        return hash01(seed, i, j, 16 + 1000 * (k + 1)) < prob ? 1 : 0;   // 구멍은 층마다 독립
+    }
+
+    private static final ThreadLocal<java.util.HashMap<Long, Byte>> KIND_CACHE = ThreadLocal.withInitial(java.util.HashMap::new);
+
+    private static boolean rawRemoved(Params p, long seed, int k, int S, int ci, int cj, double rk) {
+        double sx = centerU(seed, S, ci, cj), sz = (cj + 0.5) * S;
+        return rawKind(p, seed, k, ci, cj, sx, sz, rk) != 0;
+    }
+
+    /** 이웃(좌우 + 위아래 줄의 겹치는 칸) 중 (상한 적용 전) 탈락 후보인 칸의 수. */
+    private static int removedNeighbors(Params p, long seed, int k, int i, int j, double rk) {
+        int S = p.fragmentSize();
+        double w = rowW(seed, j, S);
+        double sx = centerU(seed, S, i, j);
+        int cnt = 0;
+        if (rawRemoved(p, seed, k, S, i - 1, j, rk)) cnt++;
+        if (rawRemoved(p, seed, k, S, i + 1, j, rk)) cnt++;
+        for (int dj = -1; dj <= 1; dj += 2) {
+            int row = j + dj;
+            int last = Integer.MIN_VALUE;
+            for (int d = -1; d <= 1; d += 2) {
+                int ci = cellIndex(seed, S, sx + d * w / 4.0, row);
+                if (ci == last) continue;
+                last = ci;
+                if (rawRemoved(p, seed, k, S, ci, row, rk)) cnt++;
+            }
+        }
+        return cnt;
+    }
+
+    /**
+     * 구멍 종류: 0 = 남음, 1 = 자연 탈락, 2 = 위층의 스폰 위 개구부.
+     * 탈락 후보가 서로 뭉쳐서 큰 구멍이 되지 않도록, 이웃 후보가 holeMax개를 넘으면 대부분 복구한다(구멍은 1~2조각 크기).
+     */
+    private static int removalKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+        java.util.HashMap<Long, Byte> cache = KIND_CACHE.get();
+        long key = seed ^ (i * 0x9E3779B97F4A7C15L) ^ (j * 0xC2B2AE3D27D4EB4FL) ^ (k * 0x165667B19E3779F9L)
+                ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L);
+        Byte cached = cache.get(key);
+        if (cached != null) return cached;
+        int r = rawKind(p, seed, k, i, j, sx, sz, rk);
+        if (r == 1 && removedNeighbors(p, seed, k, i, j, rk) > p.holeMax()
+                && hash01(seed, i, j, 18 + 1000 * (k + 1)) < 0.85) {
+            r = 0;
+        }
+        if (cache.size() > 40000) cache.clear();
+        cache.put(key, (byte) r);
+        return r;
+    }
+
+    private static boolean computeRemoved(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+        return removalKind(p, seed, k, i, j, sx, sz, rk) != 0;
+    }
+
+    private static final class Frag {
+        final boolean removed;
+        final int kind;
+        final int off, base;
+        final double tx, tz, sx, sz;
+
+        Frag(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
+            this.sx = sx;
+            this.sz = sz;
+            this.base = layerBase(k);
+            this.kind = removalKind(p, seed, k, i, j, sx, sz, rk);
+            this.removed = this.kind != 0;
+            int sk = 1000 * k;
+            double basef = p.terrainAmp() * ((2 * noise(seed, sx, sz, 1200.0, 41 + 100 * k) - 1)
+                    + 0.35 * (2 * noise(seed, sx, sz, 400.0, 42 + 100 * k) - 1));
+            double tri = hash01(seed, i, j, 13 + sk) + hash01(seed, i, j, 14 + sk) - 1.0;
+            int o = (int) Math.round(basef + tri * p.heightRange());
+            if (hash01(seed, i, j, 15 + sk) < p.bigProb()) {
+                int sign = hash01(seed, i, j, 17 + sk) < 0.5 ? -1 : 1;
+                o += sign * (int) Math.round(p.bigStep() * (0.75 + 0.75 * hash01(seed, i, j, 18 + sk)));
+            }
+            this.off = o;
+            double ttx = 0, ttz = 0;
+            if (hash01(seed, i, j, 19 + sk) < 0.6) {
+                double ang = hash01(seed, i, j, 20 + sk) * 2 * Math.PI;
+                double mag = p.tiltMax() * (0.3 + 0.7 * hash01(seed, i, j, 21 + sk));
+                ttx = Math.cos(ang) * mag;
+                ttz = Math.sin(ang) * mag;
+            }
+            this.tx = ttx;
+            this.tz = ttz;
+        }
+
+        int heightAt(int x, int z) {
+            return base + off + (int) Math.round(tx * (x + 0.5 - sx) + tz * (z + 0.5 - sz));
+        }
+    }
+
+    private static boolean cellPresent(Params p, long seed, int k, int S, int ci, int cj, double rk) {
+        double sx = centerU(seed, S, ci, cj), sz = (cj + 0.5) * S;
+        return !computeRemoved(p, seed, k, ci, cj, sx, sz, rk);
+    }
+
+    /** 이웃(좌우 + 위아래 줄의 겹치는 칸) 중 남은 조각이 2개 미만이면 외딴 조각(떠 있는 섬). */
+    private static boolean isolatedCell(Params p, long seed, int k, int ci, int cj, double rk) {
+        int S = p.fragmentSize();
+        int present = 0;
+        if (cellPresent(p, seed, k, S, ci - 1, cj, rk)) present++;
+        if (cellPresent(p, seed, k, S, ci + 1, cj, rk)) present++;
+        if (present >= 2) return false;
+        double w = rowW(seed, cj, S);
+        double sx = centerU(seed, S, ci, cj);
+        for (int dj = -1; dj <= 1; dj += 2) {
+            int row = cj + dj;
+            int last = Integer.MIN_VALUE;
+            for (int d = -1; d <= 1; d += 2) {
+                int c2 = cellIndex(seed, S, sx + d * w / 4.0, row);
+                if (c2 == last) continue;
+                last = c2;
+                if (cellPresent(p, seed, k, S, c2, row, rk)) {
+                    present++;
+                    if (present >= 2) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isolated(Params p, long seed, int k, Hit h, double rk) {
+        return isolatedCell(p, seed, k, h.i, h.j, rk);
+    }
+
+    private static long pairKey(long seed, int k, int ai, int aj, int bi, int bj) {
+        long ia = ((long) ai << 32) ^ (aj & 0xFFFFFFFFL);
+        long ib = ((long) bi << 32) ^ (bj & 0xFFFFFFFFL);
+        long lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+        return hash(seed, (int) (lo ^ (lo >>> 32)), (int) (hi ^ (hi >>> 32)), 31 + 1000 * k);
+    }
+
+    private static boolean isCrack(Params p, long seed, int k, long key, Frag a, Frag b, double e) {
+        double u = (key >>> 11) * (1.0 / (1L << 53));
+        double chance = p.crackChance() * (0.3 + 1.4 * noise(seed, (a.sx + b.sx) / 2, (a.sz + b.sz) / 2, 1536.0, 71 + 100 * k));
+        if (u >= chance) return false;
+        double w = ((key >>> 40) & 0xFFFF) / 65535.0;
+        double half = 0.5 + w * w * (p.crackHalfMax() - 0.5);
+        return e < half;
+    }
+
+    /** 조각마다 비탈이 생기는 방향은 하나(4방향 중). 움푹 들어간 조각에 비탈이 사방에서 몰리는 것을 막는다. */
+    private static boolean talusFacing(long seed, int k, int i, int j, int dir) {
+        return dir == (int) (hash01(seed, i, j, 111 + 1000 * k) * 4) % 4;
+    }
+
+    /** 컬럼 하나에서 한 층을 계산하며 함께 얻는 정보. */
+    private static final class LayerInfo {
+        boolean fallen;   // 이 조각이 탈락했고 아래층에 잔해가 떨어질 대상
+        int rodY = -1;    // 이 컬럼에 철근이 있으면 그 높이
+    }
+
+    private static final double ROD_CHANCE = 0.4;
+    private static final int MAX_DEBRIS = 28;
+    private static final double DEBRIS_CLEAR_R = SKY_R + 150;   // 스폰 주변에는 잔해를 두지 않음
+
+    /** 떨어져 나간 자리로 뻗은 2칸 굵기 철근의 높이(없으면 -1). limited가 false면 길이 제한 없이(깎여 나간 가장자리용). */
+    private static int rodAt(long seed, int k, long key, Hit h, int wx, int wz, int bottom, int top, boolean limited) {
+        double shift = ((key >>> 11) & 0xFFFF) / 65535.0 * 9.0;
+        double lateral = (h.dir <= 1 ? wz : wx) + 0.5;   // 경계를 가로지르는 축 방향의 직선(월드 좌표)
+        double tt = (lateral + shift) / 9.0;
+        int seg = (int) Math.floor(tt);
+        double f = tt - seg;
+        if (f >= 2.0 / 9.0) return -1;
+        int keyLo = (int) (key ^ (key >>> 32));
+        if (hash01(seed, keyLo, seg, 332 + 1000 * k) >= ROD_CHANCE) return -1;
+        double len = 3.0 + 5.0 * hash01(seed, keyLo, seg, 334 + 1000 * k);
+        if (limited && h.e >= len) return -1;
+        int thick = top - bottom + 1;
+        return bottom + 2 + (int) (hash01(seed, keyLo, seg, 333 + 1000 * k) * Math.max(1, thick - 6));
+    }
+
+    private static Layer computeLayer(Params p, long seed, int k, Hit h, int wx, int wz, LayerInfo info) {
+        return computeLayer(p, seed, k, h, wx, wz, info, true);
+    }
+
+    /** 철근 한 줄이 경계 너머 실제 판에 붙어 있는지: 경계 쪽으로 직선을 따라 가며 판이 철근 높이에 걸쳐 있는지 확인. */
+    private static boolean rodAnchored(Params p, long seed, int k, Hit h, int wx, int wz, int ry) {
+        int dx = h.dir == 0 ? 1 : (h.dir == 1 ? -1 : 0);
+        int dz = h.dir == 2 ? 1 : (h.dir == 3 ? -1 : 0);
+        int s0 = (int) Math.ceil(h.e);
+        for (int s = s0; s <= s0 + 2; s++) {
+            int x = wx + dx * s, z = wz + dz * s;
+            Hit hh = locate(seed, p.fragmentSize(), x, z);
+            Layer l = computeLayer(p, seed, k, hh, x, z, new LayerInfo(), false);
+            if (l != null && ry >= l.bottom() && ry + 1 <= l.top()) return true;
+        }
+        return false;
+    }
+
+    /** 탑 주변: 탑이 차지하는 자리는 비우고(탑이 직접 채움), 그 바깥은 평평한 광장, 그 바깥은 주변 판 높이로 이어진다. */
+    private static Layer computeLayer(Params p, long seed, int k, Hit h, int wx, int wz, LayerInfo info, boolean checkAnchor) {
+        double rk = p.layerRadius(k);
+        if ((double) wx * wx + (double) wz * wz > rk * rk) return null;
+        int tcx = towerCoord(wx), tcz = towerCoord(wz);
+        int tl = towerTopLayer(p, tcx, tcz);
+        if (tl >= 1 && k <= tl) {
+            double d = Math.hypot(wx - tcx, wz - tcz);
+            if (d <= PLAZA_R + PLAZA_BLEND + 6) {
+                int flatTop = layerBase(k), flatBottom = flatTop - THICK + 1;
+                if (d <= radiusAt(layerBase(tl), flatTop)) return null;
+                double edge = PLAZA_R + 10.0 * (noise(seed, wx, wz, 11.0, 361 + 100 * k) - 0.5);
+                if (d <= edge) return new Layer(flatTop, flatBottom, flatTop, false, false, 0);
+                Layer raw = computeLayerRaw(p, seed, k, h, wx, wz, info, checkAnchor);
+                if (raw == null) return null;
+                double t = Math.min(1.0, (d - edge) / PLAZA_BLEND);
+                if (t >= 1.0) return raw;
+                t = t * t * (3 - 2 * t);
+                int top = (int) Math.round(flatTop + (raw.baseTop() - flatTop) * t);
+                int bot = (int) Math.round(flatBottom + (raw.bottom() - flatBottom) * t);
+                top = Math.max(top, bot + MIN_THICK - 1);
+                return new Layer(top, bot, top, false, false, 0);
+            }
+        }
+        return computeLayerRaw(p, seed, k, h, wx, wz, info, checkAnchor);
+    }
+
+    private static Layer computeLayerRaw(Params p, long seed, int k, Hit h, int wx, int wz, LayerInfo info, boolean checkAnchor) {
+        double rk = p.layerRadius(k);
+        double r2 = (double) wx * wx + (double) wz * wz;
+        if (r2 > rk * rk) return null;
+        Frag fa = new Frag(p, seed, k, h.i, h.j, h.sx, h.sz, rk);
+        boolean culled = !fa.removed && isolated(p, seed, k, h, rk);
+        Frag fb = new Frag(p, seed, k, h.bi, h.bj, h.bsx, h.bsz, rk);
+        boolean bPresent = !fb.removed && Math.hypot(h.bsx, h.bsz) <= rk && !isolatedCell(p, seed, k, h.bi, h.bj, rk);
+        long key = pairKey(seed, k, h.i, h.j, h.bi, h.bj);
+
+        // 아랫면은 조각과 무관하게 이어진다(완만한 기복만 따라감). 윗면이 올라간 조각은 두꺼워져서 떠 보이지 않는다.
+        double baseCol = p.terrainAmp() * ((2 * noise(seed, wx, wz, 1200.0, 41 + 100 * k) - 1)
+                + 0.35 * (2 * noise(seed, wx, wz, 400.0, 42 + 100 * k) - 1));
+        int bottom = layerBase(k) - THICK + 1 + (int) Math.round(baseCol);
+        int minTop = bottom + MIN_THICK - 1;
+
+        if (fa.removed || culled) {
+            // 탈락한 조각: 아래층에 잔해가 떨어지고, 남은 이웃 판의 가장자리에서 철근이 뻗어 나온다. 스폰 위 개구부는 제외.
+            int kindA = fa.removed ? fa.kind : 1;
+            if (kindA != 2) {
+                info.fallen = k > 0 && Math.hypot(h.sx - p.spawnX(), h.sz - p.spawnZ()) >= DEBRIS_CLEAR_R
+                        && hash01(seed, h.i, h.j, 311 + 1000 * k) < p.debrisChance();
+                if (bPresent) {
+                    int topB = Math.max(fb.heightAt(wx, wz), minTop);
+                    int ry = rodAt(seed, k, key, h, wx, wz, bottom, topB, true);
+                    if (ry >= 0 && checkAnchor && !rodAnchored(p, seed, k, h, wx, wz, ry)) ry = -1;
+                    info.rodY = ry;
+                }
+            }
+            return null;
+        }
+
+        int topA = Math.max(fa.heightAt(wx, wz), minTop);
+
+        // 구멍과 맞닿은 가장자리는 군데군데 깎여 들쭉날쭉하다(깎인 자리에도 철근 패턴이 이어짐)
+        if (!bPresent) {
+            double er = 3.0 * noise(seed, wx, wz, 7.0, 341 + 100 * k) + (noise(seed, wx, wz, 3.0, 342 + 100 * k) - 0.5);
+            if (h.e < er) {
+                // 철근이 뻗어 나가는 줄 위에서는 가장자리를 깎지 않는다(철근이 허공에 뜨지 않고 판에 바로 붙도록)
+                boolean bFallen = fb.kind == 1 || (!fb.removed && isolatedCell(p, seed, k, h.bi, h.bj, rk));   // 탈락했거나 외딴 조각이라 함께 떨어져 나간 이웃
+                boolean rodLine = bFallen && rodAt(seed, k, key, h, wx, wz, bottom, topA, false) >= 0;
+                if (!rodLine) return null;
+            }
+        }
+        if (bPresent && isCrack(p, seed, k, key, fa, fb, h.e)) return null;
+
+        int top = topA;
+        boolean talus = false, slab = false;
+        if (bPresent) {
+            int topB = Math.max(fb.heightAt(wx, wz), minTop);
+            int d = topB - topA;
+            if (d >= 3 && talusFacing(seed, k, h.i, h.j, h.dir)) {
+                int keyLo = (int) (key ^ (key >>> 32));
+                double shift = ((key >>> 11) & 0xFFFF) / 65535.0 * 24.0;
+                double tt = (h.t + shift) / 24.0;
+                int seg = (int) Math.floor(tt);
+                double f = tt - seg;
+                if (hash01(seed, keyLo, seg, 7 + 1000 * k) < p.talusChance()) {
+                    double taper = Math.pow(Math.max(Math.sin(Math.PI * f), 0.0), 0.7);
+                    double jit = 0.75 + 0.5 * noise(seed, wx, wz, 9.0, 61);
+                    int hp = Math.min(d, p.talusMaxHeight());   // 쌓이는 높이 상한(큰 절벽은 윗부분이 그대로 남음)
+                    double leff = 2.0 * hp * taper * jit;
+                    if (h.e < leff) {
+                        double v = topA + hp * (1.0 - h.e / leff);
+                        v += (noise(seed, wx, wz, 5.0, 62) - 0.5) * 0.8;
+                        v = Math.max(topA, Math.min(topA + hp, v));
+                        double hq = Math.floor(v * 2) / 2;
+                        int yb = (int) Math.floor(hq);
+                        slab = (hq - yb) >= 0.5;
+                        top = yb;
+                        talus = top > topA || slab;
+                    }
+                }
+            }
+        }
+        return new Layer(top, bottom, topA, talus, slab, 0);
+    }
+
+    /**
+     * k층에서 탈락한 조각이 아래층에 떨어져 놓인 모습의 높이(이 컬럼 기준). 탈락한 조각과 거의 같은 발자국이고,
+     * 한쪽이 기울어 걸쳐져 있으며, 물결 모양 균열로 몇 조각으로 갈라져 있다.
+     */
+    private static int debrisHeight(long seed, int k, Hit h, int wx, int wz) {
+        double e = h.e + (noise(seed, wx, wz, 6.0, 351) - 0.5) * 3.0;
+        double m = 2.0 + 2.0 * hash01(seed, h.i, h.j, 352 + 1000 * k);
+        if (e < m) return 0;
+        double ang = hash01(seed, h.i, h.j, 353 + 1000 * k) * 2 * Math.PI;
+        double slope = 0.08 + 0.14 * hash01(seed, h.i, h.j, 354 + 1000 * k);
+        double h0 = 4.0 + 10.0 * hash01(seed, h.i, h.j, 355 + 1000 * k);
+        double hd = h0 + slope * ((wx + 0.5 - h.sx) * Math.cos(ang) + (wz + 0.5 - h.sz) * Math.sin(ang))
+                + (noise(seed, wx, wz, 40.0, 356) - 0.5) * 6.0;
+        hd *= Math.min(1.0, (e - m) / 6.0 + 0.2);   // 가장자리는 얇게
+        double r = noise(seed, wx, wz, 38.0, 357 + 10 * k);
+        if (Math.abs(r - 0.5) < 0.022) return 0;     // 균열
+        return (int) Math.max(2, Math.min(22, Math.round(hd)));
+    }
+
+    // ---------------- 기둥 ----------------
+    private static Pillar pillar(long seed, int cx, int cz) {
+        double sx = 0, sz = 0;
+        if (hash01(seed, cx, cz, 91) < 0.2) {
+            double deg = 2.0 + 3.0 * hash01(seed, cx, cz, 92);
+            double m = Math.tan(Math.toRadians(deg));
+            double ang = hash01(seed, cx, cz, 93) * 2 * Math.PI;
+            sx = Math.cos(ang) * m;
+            sz = Math.sin(ang) * m;
+        }
+        double r = hash01(seed, cx, cz, 94);
+        double u = hash01(seed, cx, cz, 95);
+        int brk = r < 0.4 ? (int) (u * 9) : (r < 0.8 ? 8 + (int) (u * 23) : 30 + (int) (u * 41));
+        double pa = hash01(seed, cx, cz, 96) * 2 * Math.PI;
+        double pm = 0.15 + 0.45 * hash01(seed, cx, cz, 97);
+        double ra = hash01(seed, cx, cz, 98) * 2 * Math.PI;
+        return new Pillar(cx, cz, sx, sz, brk, Math.cos(pa) * pm, Math.sin(pa) * pm, ra);
+    }
+
+    /** 높이 y에서 기둥 반지름: 아래로 갈수록 굵어진다. */
+    private static double radiusAt(int ytop, int y) {
+        return Math.min(PILLAR_MAX_R, PILLAR_R + PILLAR_TAPER * Math.max(0, ytop - y));
+    }
+
+    private static double footprintD2(Pillar pl, int x, int z, int y, int ytop) {
+        double sh = Math.min(TILT_SPAN, Math.max(0, ytop - y));
+        double dx = x - (pl.cx + pl.slopeX * sh), dz = z - (pl.cz + pl.slopeZ * sh);
+        return dx * dx + dz * dz;
+    }
+
+    private static boolean inFootprint(Pillar pl, int x, int z, int y, int ytop) {
+        double r = radiusAt(ytop, y);
+        return footprintD2(pl, x, z, y, ytop) <= r * r;
+    }
+
+    private static boolean anyFootprint(Pillar pl, int x, int z, int ytop) {
+        for (int y = ytop; y > 0; y -= 32) {
+            if (inFootprint(pl, x, z, y, ytop)) return true;
+        }
+        return inFootprint(pl, x, z, 0, ytop);
+    }
+
+    /** 판이 없는 자리의 기둥이 부러진 높이: 기둥마다 깊이가 다르고 파단면이 기울어져 있고 울퉁불퉁하다. */
+    private static int breakY(long seed, Pillar pl, int x, int z, int ytop) {
+        double plane = pl.planeA * (x - pl.cx) + pl.planeB * (z - pl.cz);
+        double jag = noise(seed, x, z, 5.0, 51);
+        int by = ytop - 1 - pl.brk - (int) Math.round(Math.max(0.0, plane) + jag * 6.0);
+        return Math.max(6, by);
+    }
+
+    /**
+     * 부러진 기둥의 철근: 기둥마다 정해진 4곳(기둥 중심에서 REBAR_DIST, 90도 간격)에 3x3 묶음.
+     * 묶음별로 존재 여부(75%)와 높이(윗면 위로 5~14)가 정해져 있다. 없으면 -1.
+     */
+    private static int rebarTopAt(long seed, Pillar pl, int x, int z, int pillarTop, int ytop) {
+        for (int k = 0; k < 4; k++) {
+            double ang = pl.rebarAng + k * Math.PI / 2;
+            int bx = pl.cx + (int) Math.round(REBAR_DIST * Math.cos(ang)) - 1;
+            int bz = pl.cz + (int) Math.round(REBAR_DIST * Math.sin(ang)) - 1;
+            if (x < bx || x > bx + 2 || z < bz || z > bz + 2) continue;
+            if (hash01(seed, pl.cx + k * 7, pl.cz, 83) >= 0.75) return -1;
+            int by = breakY(seed, pl, bx + 1, bz + 1, ytop);
+            double rr = radiusAt(ytop, by) - 3.0;
+            double lim = rr * rr;
+            if (footprintD2(pl, bx, bz, by, ytop) > lim || footprintD2(pl, bx + 2, bz + 2, by, ytop) > lim
+                    || footprintD2(pl, bx, bz + 2, by, ytop) > lim || footprintD2(pl, bx + 2, bz, by, ytop) > lim) return -1;
+            int h = 5 + rand(seed, pl.cx + k * 7, pl.cz, 84, 10);
+            return Math.max(by + h, pillarTop + 1);
+        }
+        return -1;
+    }
+
+    // ---------------- 탑 ----------------
+    static int towerCoord(int v) {
+        return Math.floorDiv(v + PILLAR_SPACING / 2, PILLAR_SPACING) * PILLAR_SPACING;
+    }
+
+    /** 이 격자점을 덮는 가장 높은 층(없으면 -1). 1 이상이면 그 자리는 층을 잇는 탑이다. */
+    static int towerTopLayer(Params p, int cx, int cz) {
+        double c2 = (double) cx * cx + (double) cz * cz;
+        for (int k = p.layers() - 1; k >= 0; k--) {
+            double rk = p.layerRadius(k);
+            if (c2 <= rk * rk) return k;
+        }
+        return -1;
+    }
+
+    private static Tower tower(long seed, int cx, int cz, int topLayer) {
+        boolean broken = hash01(seed, cx, cz, 401) < 0.2;
+        int gk = Math.min(topLayer - 1, (int) (hash01(seed, cx, cz, 402) * topLayer));
+        int lo = layerBase(gk) + 14, hi = layerBase(gk + 1) - THICK - 4;
+        int y0 = lo + (int) (hash01(seed, cx, cz, 403) * (hi - lo) * 0.4);
+        int y1 = Math.min(hi, y0 + 40 + (int) (hash01(seed, cx, cz, 404) * 70));
+        double tearAng = hash01(seed, cx, cz, 405) * 2 * Math.PI;
+        double tearHalf = 0.35 + 0.4 * hash01(seed, cx, cz, 406);
+        boolean rampGap = broken && hash01(seed, cx, cz, 407) < 0.5;
+        double gapAng = tearAng + (hash01(seed, cx, cz, 408) - 0.5) * tearHalf;
+        return new Tower(cx, cz, topLayer, broken, tearAng, tearHalf, y0, y1, rampGap, gapAng);
+    }
+
+    private static double angDiff(double a, double b) {
+        double d = Math.abs(a - b) % (2 * Math.PI);
+        return d > Math.PI ? 2 * Math.PI - d : d;
+    }
+
+    /** k층 출입구의 방향: 경사로가 그 층 높이를 지나는 각도. */
+    static double doorAngle(int k) {
+        double turns = (double) (layerBase(k) - layerBase(0)) / RAMP_PITCH;
+        return (turns - Math.floor(turns)) * 2 * Math.PI;
+    }
+
+    /** 탑이 이 블록을 정하면 그 블록, 탑과 무관한 자리면 null. */
+    static BlockState towerBlock(long seed, Tower t, int x, int y, int z) {
+        if (y < MIN_Y || y > t.wallTop) return null;
+        double dx = x - t.cx, dz = z - t.cz;
+        double r = Math.sqrt(dx * dx + dz * dz);
+        double rout = radiusAt(t.wallTop, y);
+        if (r > rout) return null;
+        if (r <= TOWER_RC) return PILLAR;          // 중심 기둥
+        double phi = Math.atan2(dz, dx);
+        if (phi < 0) phi += 2 * Math.PI;
+        int base0 = layerBase(0);
+
+        if (r > TOWER_RI) {                         // 벽
+            for (int k = 0; k < t.topLayer; k++) {
+                int fy = layerBase(k);
+                if (y > fy && y <= fy + DOOR_H && angDiff(phi, doorAngle(k)) * r <= DOOR_HALF_W) return AIR;
+            }
+            if (y > base0 + 4) {                    // 좁은 창
+                int rel = Math.floorMod(y - base0, 24);
+                if (rel >= 12 && rel <= 14) {
+                    double seg = 2 * Math.PI / 12;
+                    double a = phi % seg;
+                    if (Math.min(a, seg - a) * r <= 0.9) return AIR;
+                }
+            }
+            if (t.broken && y >= t.tearY0 && y <= t.tearY1) {   // 뜯겨 나간 벽
+                double mid = (t.tearY0 + t.tearY1) / 2.0, hh = (t.tearY1 - t.tearY0) / 2.0 + 0.5;
+                double f = (y - mid) / hh;
+                double half = t.tearHalf * Math.sqrt(Math.max(0.0, 1 - f * f))
+                        * (0.75 + 0.5 * noise(seed, phi * 60.0, y, 6.0, 411));
+                if (angDiff(phi, t.tearAng) <= half) return AIR;
+            }
+            double nn = noise3(seed, x, y, z, 7.0, 101);   // 바깥 표면 파임
+            if (nn > PIT_THRESHOLD) {
+                double depth = 2.0 + 5.0 * Math.min(1.0, (nn - PIT_THRESHOLD) / 0.12);
+                if (r > rout - depth) return AIR;
+            }
+            return PILLAR;
+        }
+
+        // 벽 안쪽: 최하층 바닥 아래는 기초, 그 위는 나선 경사로
+        if (y <= base0) return PILLAR;
+        double s0 = base0 + 1 + RAMP_PITCH * phi / (2 * Math.PI);
+        int m1 = (int) Math.floor((y - s0) / RAMP_PITCH);
+        double sMax = t.wallTop + 1 + 1e-6;
+        for (int m = m1; m <= m1 + 1; m++) {
+            if (m < 0) continue;
+            double S = s0 + RAMP_PITCH * m;          // 이 바퀴에서 서 있는 높이
+            if (S > sMax) continue;
+            if (t.rampGap && S >= t.tearY0 && S <= t.tearY1 && angDiff(phi, t.gapAng) < 0.3) continue;
+            double s2 = Math.floor(S * 2) / 2;
+            int sb = (int) Math.floor(s2);
+            if (y < sb && y >= sb - RAMP_THICK) return PILLAR;
+            if (y == sb && s2 - sb >= 0.5) return RAMP_SLAB;
+        }
+        return AIR;
+    }
+
+    // ---------------- 컬럼 ----------------
+    public static Column column(Params p, long seed, int wx, int wz) {
+        int n = p.layers();
+        Layer[] layers = new Layer[n];
+        int[] rodY = new int[n];
+        Arrays.fill(rodY, -1);
+        long r2 = (long) wx * wx + (long) wz * wz;
+        long R0 = p.radius();
+        long lim0 = R0 + PILLAR_MAX_R + TILT_MARGIN + PILLAR_SPACING;
+        if (r2 > lim0 * lim0) return new Column(layers, -1, -1, null, 0, rodY, null);
+
+        Hit h = locate(seed, p.fragmentSize(), wx, wz);
+        LayerInfo[] infos = new LayerInfo[n];
+        for (int k = 0; k < n; k++) {
+            infos[k] = new LayerInfo();
+            layers[k] = computeLayer(p, seed, k, h, wx, wz, infos[k]);
+            rodY[k] = infos[k].rodY;
+        }
+
+        // 탈락한 위층 조각이 가장 가까운 아래층 판 위에 떨어져 쌓임(아래가 모두 구멍이면 허공으로 떨어진 것)
+        for (int k = n - 1; k >= 1; k--) {
+            if (!infos[k].fallen) continue;
+            int j = -1;
+            for (int q = k - 1; q >= 0; q--) {
+                if (layers[q] != null) { j = q; break; }
+            }
+            if (j < 0) continue;
+            int hd = debrisHeight(seed, k, h, wx, wz);
+            if (hd <= 0) continue;
+            Layer l = layers[j];
+            layers[j] = new Layer(l.top(), l.bottom(), l.baseTop(), l.talus(), false, Math.min(MAX_DEBRIS, l.debris() + hd));
+        }
+
+        Pillar pil = null;
+        Tower tw = null;
+        int pillarTop = -1, rebarTop = -1, pYtop = 0;
+        int pcx = towerCoord(wx);
+        int pcz = towerCoord(wz);
+        long ex = wx - pcx, ez = wz - pcz;
+        long lim = PILLAR_MAX_R + TILT_MARGIN;
+        if (ex * ex + ez * ez <= lim * lim) {
+            int topLayer = towerTopLayer(p, pcx, pcz);
+            if (topLayer >= 1) {
+                double rmax = radiusAt(layerBase(topLayer), MIN_Y) + 1;
+                if (ex * ex + ez * ez <= rmax * rmax) tw = tower(seed, pcx, pcz, topLayer);
+            } else if (topLayer == 0) {
+                int ytop = layerBase(topLayer) - THICK + 1;
+                Pillar cand = pillar(seed, pcx, pcz);
+                if (anyFootprint(cand, wx, wz, ytop)) {
+                    pil = cand;
+                    pYtop = ytop;
+                    Layer lt = layers[topLayer];
+                    if (lt != null) {
+                        pillarTop = lt.bottom() - 1;
+                    } else {
+                        pillarTop = breakY(seed, pil, wx, wz, ytop);
+                        rebarTop = rebarTopAt(seed, pil, wx, wz, pillarTop, ytop);
+                    }
+                }
+            }
+        }
+        return new Column(layers, pillarTop, rebarTop, pil, pYtop, rodY, tw);
+    }
+
+    /** k층 하나만 조회(스폰/탐색용, 잔해 포함). 판이 없으면 null. */
+    public static Layer layerAt(Params p, long seed, int k, int wx, int wz) {
+        if (k < 0 || k >= p.layers()) return null;
+        double rk = p.layerRadius(k);
+        if ((double) wx * wx + (double) wz * wz > rk * rk) return null;
+        return column(p, seed, wx, wz).layers()[k];
+    }
+
+    /** 시험용: (x, z)의 조각 격자 좌표 {i, j, bi, bj}. */
+    static int[] debugCell(Params p, long seed, int wx, int wz) {
+        Hit h = locate(seed, p.fragmentSize(), wx, wz);
+        return new int[]{h.i, h.j, h.bi, h.bj, h.dir};
+    }
+
+    // ---------------- 블록 ----------------
+    private static BlockState rubble(long seed, int x, int y, int z) {
+        int r = rand(seed, x * 31 + y, z, 3, 10);
+        if (r < 4) return COBBLE;
+        if (r < 7) return ANDESITE;
+        if (r < 9) return STONE;
+        return CRACKED;
+    }
+
+    /** 하늘 패널 블록(모드가 등록한 블록). 생성기가 생성 전에 넣어 준다. 비어 있으면 대체 블록. */
+    public static volatile BlockState skyPanel = null;
+
+    /** 하늘 손상: 0 = 정상, 2 = 떨어져 나간 작은 구멍(움푹). 아주 드물다. */
+    static int skyDamage(long seed, int k, int x, int z) {
+        double zone = noise(seed, x, z, 400.0, 513 + k);
+        if (zone < 0.80) return 0;
+        double hole = noise(seed, x, z, 9.0, 511 + k) * 0.7 + noise(seed, x, z, 4.0, 512 + k) * 0.3;
+        return hole > 0.86 ? 2 : 0;
+    }
+
+    /** 위층 판의 아랫면(아래층에서 올려다보면 하늘): 이음새 없는 하늘 패널. 최하층 아랫면은 그냥 콘크리트. */
+    private static BlockState underside(long seed, Layer l, int x, int y, int z) {
+        int k = (int) Math.round((double) (l.bottom() + THICK - 1 - LEVEL_BASE) / LAYER_SPACING);
+        if (k < 1 || y > l.bottom() + 1) return null;
+        int dmg = skyDamage(seed, k, x, z);
+        if (dmg == 2) return AIR;                  // 떨어져 나간 자리: 2칸 움푹 들어가 안쪽 콘크리트가 보임
+        if (y != l.bottom()) return null;
+        BlockState sp = skyPanel;
+        return sp != null ? sp : PANEL_LIT;
+    }
+
+    public static BlockState deckBlock(long seed, Layer l, int x, int y, int z) {
+        if (y < l.bottom() || y > l.maxY()) return AIR;
+        if (y <= l.bottom() + 1 && l.top() - l.bottom() >= 3) {
+            BlockState u = underside(seed, l, x, y, z);
+            if (u != null) return u;
+        }
+        if (l.debris() > 0 && y > l.top()) {
+            // 위층에서 떨어진 판 조각: 판과 같은 콘크리트
+            if (y == l.top() + l.debris()) {
+                int r = rand(seed, x, z, 4, 16);
+                if (r < 3) return ANDESITE;
+                if (r == 3) return COBBLE;
+                return DECK_TOP;
+            }
+            return DECK_BODY;
+        }
+        if (l.slab() && y == l.top() + 1) return RUBBLE_SLAB;
+        if (l.talus() && y > l.baseTop()) return rubble(seed, x, y, z);
+        if (y == l.top()) {
+            int r = rand(seed, x, z, 2, 16);
+            if (r < 2) return ANDESITE;
+            if (r == 2) return COBBLE;
+            return DECK_TOP;
+        }
+        return DECK_BODY;
+    }
+
+    public static BlockState rodBlock() { return REBAR; }
+
+    public static BlockState pillarBlock(long seed, Column c, int x, int y, int z) {
+        Pillar pl = c.pillar();
+        if (pl == null || y < MIN_Y || y >= MIN_Y + HEIGHT) return AIR;
+        int ytop = c.pillarYtop();
+        if (y <= c.pillarTop()) {
+            double d2 = footprintD2(pl, x, z, y, ytop);
+            double r = radiusAt(ytop, y);
+            if (d2 <= r * r) {
+                // 표면이 덩어리째 깊게 파여 있음(드물지만 3~7블록 깊이)
+                double nn = noise3(seed, x, y, z, 7.0, 101);
+                if (nn > PIT_THRESHOLD) {
+                    double depth = 2.0 + 5.0 * Math.min(1.0, (nn - PIT_THRESHOLD) / 0.12);
+                    if (Math.sqrt(d2) > r - depth) return AIR;
+                }
+                return PILLAR;
+            }
+            return AIR;
+        }
+        if (y <= c.rebarTop()) return REBAR;
+        return AIR;
+    }
+
+    /** 모든 것을 합친 블록(기둥 우선). 생성기는 층별/기둥별로 따로 채우고, 이 함수는 조회용. */
+    public static BlockState block(long seed, Column c, int x, int y, int z) {
+        if (y < MIN_Y || y >= MIN_Y + HEIGHT) return AIR;
+        if (c.tower() != null) {
+            BlockState ts = towerBlock(seed, c.tower(), x, y, z);
+            if (ts != null) return ts;
+        }
+        BlockState s = pillarBlock(seed, c, x, y, z);
+        if (!s.isAir()) return s;
+        int[] rods = c.rodY();
+        for (int r : rods) {
+            if (r >= 0 && (y == r || y == r + 1)) return REBAR;
+        }
+        for (Layer l : c.layers()) {
+            if (l != null && y >= l.bottom() && y <= l.maxY()) return deckBlock(seed, l, x, y, z);
+        }
+        return AIR;
+    }
+
+    // ---------------- 탐색 ----------------
+    private static int[] deckAt(Params p, long seed, int layer, int x, int z) {
+        Column c = column(p, seed, x, z);
+        if (layer >= 0) {
+            Layer l = layer < c.layers().length ? c.layers()[layer] : null;
+            return l == null ? null : new int[]{x, z, l.standY(), layer};
+        }
+        for (int k = c.layers().length - 1; k >= 0; k--) {
+            Layer l = c.layers()[k];
+            if (l != null) return new int[]{x, z, l.standY(), k};
+        }
+        return null;
+    }
+
+    /**
+     * (x, z)에서 가장 가까운 남아 있는 판 컬럼을 찾는다. layer가 -1이면 모든 층(가까운 곳에서 같은 거리면 위층 우선).
+     * 결과 {x, z, 서 있을 y, 층}, 없으면 null. 가까운 곳은 촘촘히, 먼 곳은 성기게 훑는다.
+     */
+    public static int[] nearestDeck(Params p, long seed, int x, int z, int maxR, int layer) {
+        int[] d0 = deckAt(p, seed, layer, x, z);
+        if (d0 != null) return d0;
+        int r = 4;
+        while (r <= maxR) {
+            int step = r <= 64 ? 4 : (r <= 512 ? 16 : 64);
+            int cnt = Math.max(8, Math.min(256, (int) Math.ceil(2 * Math.PI * r / step)));
+            for (int i = 0; i < cnt; i++) {
+                double a = 2 * Math.PI * i / cnt;
+                int tx = x + (int) Math.round(r * Math.cos(a));
+                int tz = z + (int) Math.round(r * Math.sin(a));
+                int[] d = deckAt(p, seed, layer, tx, tz);
+                if (d != null) return d;
+            }
+            r += step;
+        }
+        return null;
+    }
+}
