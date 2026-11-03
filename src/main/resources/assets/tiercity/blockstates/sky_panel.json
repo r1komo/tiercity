@@ -1,0 +1,31 @@
+{
+  "variants": {
+    "phase=0": {
+      "model": "tiercity:block/sky_panel_day"
+    },
+    "phase=1": {
+      "model": "tiercity:block/sky_panel_dusk"
+    },
+    "phase=2": [
+      {
+        "model": "tiercity:block/sky_panel_night_0",
+        "weight": 12
+      },
+      {
+        "model": "tiercity:block/sky_panel_night_1",
+        "weight": 2
+      },
+      {
+        "model": "tiercity:block/sky_panel_night_2",
+        "weight": 2
+      },
+      {
+        "model": "tiercity:block/sky_panel_night_3",
+        "weight": 1
+      }
+    ],
+    "phase=3": {
+      "model": "tiercity:block/sky_panel_dawn"
+    }
+  }
+}

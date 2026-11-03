@@ -49,6 +49,9 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                                                         StructureManager structureManager, ChunkAccess chunk) {
         final long seed = layoutSeed(randomState);
         final CityLayout.Params params = TierCityConfig.params();
+        if (CityLayout.skyPanel == null) {
+            CityLayout.skyPanel = TierCityMod.SKY_PANEL.get().defaultBlockState();
+        }
         return CompletableFuture.supplyAsync(() -> {
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             int minX = chunk.getPos().getMinBlockX();

@@ -1,4 +1,5 @@
 {
   "generator.tiercity.layered_city": "Tier City",
-  "message.tiercity.items_recovered": "You fell into the abyss. Your items were left on the nearest deck at (%s, %s, %s)."
+  "message.tiercity.items_recovered": "You fell into the abyss. Your items were left on the nearest deck at (%s, %s, %s).",
+  "block.tiercity.sky_panel": "Artificial Sky Panel"
 }
