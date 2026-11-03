@@ -142,7 +142,6 @@ public final class CityLayout {
     private static final BlockState RAMP_SLAB = Blocks.POLISHED_ANDESITE_SLAB.defaultBlockState();
     private static final BlockState REBAR = Blocks.RAW_IRON_BLOCK.defaultBlockState();
     private static final BlockState PANEL_LIT = Blocks.LIGHT_BLUE_CONCRETE.defaultBlockState();   // 모드 블록이 없을 때(시험용)
-    private static final BlockState PANEL_OFF = Blocks.BLACK_CONCRETE.defaultBlockState();
 
     private CityLayout() {}
 
@@ -828,14 +827,12 @@ public final class CityLayout {
     /** 하늘 패널 블록(모드가 등록한 블록). 생성기가 생성 전에 넣어 준다. 비어 있으면 대체 블록. */
     public static volatile BlockState skyPanel = null;
 
-    /** 하늘 손상 종류: 0 = 정상, 1 = 꺼진 구역(검게), 2 = 떨어져 나간 구멍(움푹). 격자 없이 덩어리 모양. */
+    /** 하늘 손상: 0 = 정상, 2 = 떨어져 나간 작은 구멍(움푹). 아주 드물다. */
     static int skyDamage(long seed, int k, int x, int z) {
-        double hole = noise(seed, x, z, 14.0, 511 + k) * 0.7 + noise(seed, x, z, 5.0, 512 + k) * 0.3;
-        double holeZone = noise(seed, x, z, 300.0, 513 + k);
-        if (hole > 0.80 - 0.10 * holeZone) return 2;
-        double dead = noise(seed, x, z, 45.0, 514 + k) * 0.75 + noise(seed, x, z, 9.0, 515 + k) * 0.25;
-        if (dead > 0.74) return 1;
-        return 0;
+        double zone = noise(seed, x, z, 400.0, 513 + k);
+        if (zone < 0.80) return 0;
+        double hole = noise(seed, x, z, 9.0, 511 + k) * 0.7 + noise(seed, x, z, 4.0, 512 + k) * 0.3;
+        return hole > 0.86 ? 2 : 0;
     }
 
     /** 위층 판의 아랫면(아래층에서 올려다보면 하늘): 이음새 없는 하늘 패널. 최하층 아랫면은 그냥 콘크리트. */
@@ -845,7 +842,6 @@ public final class CityLayout {
         int dmg = skyDamage(seed, k, x, z);
         if (dmg == 2) return AIR;                  // 떨어져 나간 자리: 2칸 움푹 들어가 안쪽 콘크리트가 보임
         if (y != l.bottom()) return null;
-        if (dmg == 1) return PANEL_OFF;
         BlockState sp = skyPanel;
         return sp != null ? sp : PANEL_LIT;
     }
