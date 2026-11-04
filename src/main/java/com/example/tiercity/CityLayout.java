@@ -313,8 +313,7 @@ public final class CityLayout {
      */
     private static int removalKind(Params p, long seed, int k, int i, int j, double sx, double sz, double rk) {
         java.util.HashMap<Long, Byte> cache = KIND_CACHE.get();
-        long key = seed ^ (i * 0x9E3779B97F4A7C15L) ^ (j * 0xC2B2AE3D27D4EB4FL) ^ (k * 0x165667B19E3779F9L)
-                ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L);
+        long key = hash(seed ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L), i, j, 7001 + 31 * k);   // 섞인 키(XOR 키는 충돌함)
         Byte cached = cache.get(key);
         if (cached != null) return cached;
         int r = rawKind(p, seed, k, i, j, sx, sz, rk);

@@ -55,6 +55,12 @@ final class DistrictLayout {
     private static final BlockState B_WALL_WORN = Blocks.ANDESITE.defaultBlockState();
     private static final BlockState B_FOUND = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
     private static final BlockState B_REBAR = Blocks.RAW_IRON_BLOCK.defaultBlockState();
+    private static final BlockState WINDOW = Blocks.GLASS.defaultBlockState();
+    private static final BlockState WINDOW_LIT = Blocks.OCHRE_FROGLIGHT.defaultBlockState();
+    private static final BlockState A_WALL = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
+    private static final BlockState A_FRAME = Blocks.POLISHED_ANDESITE.defaultBlockState();
+    private static final BlockState STEP_SLAB = Blocks.STONE_BRICK_SLAB.defaultBlockState();
+    private static final BlockState RUNWAY_LIGHT = Blocks.PEARLESCENT_FROGLIGHT.defaultBlockState();
 
     // ---------------- 결과 ----------------
     /** 표면 재질: 0 판 그대로, 1 아스팔트, 2 연석, 3 차선 도색, 4 눈 더미, 5 파인 자국 바닥(돌무더기). */
@@ -69,11 +75,11 @@ final class DistrictLayout {
         int pile;            // 윗면 위 돌무더기 높이
         int light = L_NONE;
         int lightH;          // 부러진 기둥 높이
-        Building bld;        // 이 컬럼을 덮는 건물
+        Landmarks.Struct st; // 이 컬럼을 덮는 구조물(건물, 석상, 사원, 공군 기지)
         int snowY = -1;      // 얇은 눈이 쌓이는 y
         int maxY;
 
-        boolean blocksStanding() { return bld != null || light != L_NONE; }
+        boolean blocksStanding() { return st != null || light != L_NONE; }
 
         /** 서 있을 수 있는 y. */
         int standY() { return snowY >= 0 ? snowY : top + pile + 1; }
@@ -199,6 +205,7 @@ final class DistrictLayout {
         double n = 0.75 * CityLayout.noise(seed, x, z, 900.0, 820 + k) + 0.25 * CityLayout.noise(seed, x, z, 260.0, 821 + k);
         if (openSky(p, seed, k, x, z)) n -= 0.12;   // 하늘 아래 바깥 고리: 전쟁터(더 비고 더 부서짐)
         else n += 0.08;                              // 지붕(위층) 아래: 빽빽한 콘크리트 정글
+        if (Landmarks.cityLayer(p, k)) n += 0.06;    // 2층: 아직 사람이 살던 모습이 남은 도시
         if (n > 0.52) return DENSE;
         if (n > 0.36) return SPARSE;
         return OPEN;
@@ -218,10 +225,20 @@ final class DistrictLayout {
     }
 
     // ---------------- 건물 ----------------
-    static final class Building {
-        int x0, z0, x1, z1, base, fh, floors, cs, cw, id;
+    static final int RUIN = 0, APARTMENT = 1;
+
+    static final class Building implements Landmarks.Struct {
+        int x0, z0, x1, z1, base, fh, floors, cs, cw, id, style;
         double wallKeep, dmg;
         boolean openSky;
+
+        @Override
+        public BlockState block(long seed, int x, int y, int z, int deckTop) {
+            return style == APARTMENT ? apartmentBlock(seed, this, x, y, z, deckTop) : buildingBlock(seed, this, x, y, z, deckTop);
+        }
+
+        @Override
+        public int maxY() { return nominalTop() + 5; }
 
         int w() { return x1 - x0 + 1; }
         int d() { return z1 - z0 + 1; }
@@ -232,14 +249,24 @@ final class DistrictLayout {
     static final class Lot {
         int district;
         Building[] buildings = new Building[0];
+        // 석상 마당: 원점(gx0, gz0)에서 간격 sp로 nx x nz 격자, 칸마다 석상 하나(없으면 null)
+        int gx0, gz0, sp, nx, nz;
+        Landmarks.Statue[] statues;
+
+        Landmarks.Statue statueNear(int x, int z) {
+            if (statues == null) return null;
+            int i = Math.round((x - gx0) / (float) sp), j = Math.round((z - gz0) / (float) sp);
+            if (i < 0 || j < 0 || i >= nx || j >= nz) return null;
+            Landmarks.Statue st = statues[i + j * nx];
+            return (st != null && st.contains(x, z)) ? st : null;
+        }
     }
 
     private static final ThreadLocal<HashMap<Long, Lot>> LOT_CACHE = ThreadLocal.withInitial(HashMap::new);
 
     static Lot lot(CityLayout.Params p, long seed, int k, int ix, int jz) {
         HashMap<Long, Lot> cache = LOT_CACHE.get();
-        long key = seed ^ (ix * 0x9E3779B97F4A7C15L) ^ (jz * 0xC2B2AE3D27D4EB4FL) ^ (k * 0x165667B19E3779F9L)
-                ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L);
+        long key = CityLayout.hash(seed ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L), ix, jz, 7002 + 31 * k);   // 섞인 키(XOR 키는 충돌함)
         Lot cached = cache.get(key);
         if (cached != null) return cached;
         Lot lot = buildLot(p, seed, k, ix, jz);
@@ -251,7 +278,8 @@ final class DistrictLayout {
     private static Lot buildLot(CityLayout.Params p, long seed, int k, int ix, int jz) {
         Lot lot = new Lot();
         lot.district = lotDistrict(p, seed, k, ix, jz);
-        if (k != 0) return lot;                                   // 1단계: 건물은 1층만
+        if (Landmarks.cityLayer(p, k)) return buildCityLot(p, seed, k, ix, jz, lot);
+        if (k != 0) return lot;
         if (merged(p, seed, k, ix - 1, jz)) return lot;           // 서쪽 구획과 합쳐짐: 건물은 서쪽 구획이 지음
         boolean mega = merged(p, seed, k, ix, jz);
         int lx0 = lineX(seed, k, ix) + ROAD_HALF + 1, lx1 = lineX(seed, k, ix + (mega ? 2 : 1)) - ROAD_HALF - 1;
@@ -375,7 +403,7 @@ final class DistrictLayout {
 
     /** (x, z)를 덮는 건물(없으면 null). 도로 위는 항상 null. */
     static Building buildingAt(CityLayout.Params p, long seed, int k, int x, int z) {
-        if (k != 0 || isFinalLayer(p, k)) return null;
+        if ((k != 0 && !Landmarks.cityLayer(p, k)) || isFinalLayer(p, k)) return null;
         int[] u = warp(p, seed, k, x, z);
         int ix = cellX(seed, k, u[0]), jz = cellZ(seed, k, u[1]);
         for (int a = -1; a <= 1; a++) {
@@ -386,6 +414,193 @@ final class DistrictLayout {
             }
         }
         return null;
+    }
+
+    // ---------------- 2층: 아파트 단지와 석상 마당 ----------------
+    /** 탑 광장에서 비켜 나도록 사각형을 잘라 냄. 못 쓰면 null. */
+    private static int[] trimForPlazas(int sx0, int sz0, int sx1, int sz1, int minSize) {
+        int[] gx = {CityLayout.towerCoord(sx0), CityLayout.towerCoord(sx1)};
+        int[] gz = {CityLayout.towerCoord(sz0), CityLayout.towerCoord(sz1)};
+        for (int a : gx) for (int b : gz) {
+            if (rectDist(sx0, sz0, sx1, sz1, a, b) >= PLAZA_CLEAR) continue;
+            int c = PLAZA_CLEAR + 1;
+            int[][] opt = {{a + c, sz0, sx1, sz1}, {sx0, sz0, a - c, sz1}, {sx0, b + c, sx1, sz1}, {sx0, sz0, sx1, b - c}};
+            long bestArea = -1;
+            int[] best = null;
+            for (int[] o : opt) {
+                int ox0 = Math.max(sx0, o[0]), oz0 = Math.max(sz0, o[1]), ox1 = Math.min(sx1, o[2]), oz1 = Math.min(sz1, o[3]);
+                if (ox1 - ox0 < minSize || oz1 - oz0 < minSize) continue;
+                long ar = (long) (ox1 - ox0) * (oz1 - oz0);
+                if (ar > bestArea) { bestArea = ar; best = new int[]{ox0, oz0, ox1, oz1}; }
+            }
+            if (best == null) return null;
+            sx0 = best[0]; sz0 = best[1]; sx1 = best[2]; sz1 = best[3];
+        }
+        return new int[]{sx0, sz0, sx1, sz1};
+    }
+
+    private static int ceilingFor(CityLayout.Params p, long seed, int k, int x0, int z0, int x1, int z1) {
+        if (k + 1 >= p.layers()) return Integer.MAX_VALUE;
+        for (int a : new int[]{x0, (x0 + x1) / 2, x1}) for (int b : new int[]{z0, (z0 + z1) / 2, z1}) {
+            if (CityLayout.insideRim(p, seed, k + 1, a, b)) return CityLayout.layerBottom(k + 1) - CEILING_MARGIN;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private static Lot buildCityLot(CityLayout.Params p, long seed, int k, int ix, int jz, Lot lot) {
+        int lx0 = lineX(seed, k, ix) + ROAD_HALF + 4, lx1 = lineX(seed, k, ix + 1) - ROAD_HALF - 4;
+        int lz0 = lineZ(seed, k, jz) + ROAD_HALF + 4, lz1 = lineZ(seed, k, jz + 1) - ROAD_HALF - 4;
+        if (lx1 - lx0 < 20 || lz1 - lz0 < 20) return lot;
+        if (Landmarks.overlapsSite(p, seed, k, lx0, lz0, lx1, lz1, 12)) return lot;   // 사원/기지 자리
+        double r = CityLayout.hash01(seed, ix, jz, 940 + k);
+        boolean statues = (lot.district == OPEN && r < 0.55) || (lot.district == SPARSE && r < 0.2);
+        if (statues) {
+            buildStatueYard(p, seed, k, ix, jz, lot, lx0, lz0, lx1, lz1);
+            return lot;
+        }
+        if (lot.district == OPEN) return lot;                    // 빈 광장
+        if (r >= (lot.district == DENSE ? 0.97 : 0.85) * p.buildingDensity()) return lot;
+
+        // 아파트 단지: 긴 쪽을 따라 판상형 동이 줄지어 섬
+        boolean alongX = (lx1 - lx0) >= (lz1 - lz0);
+        int depth = 18 + CityLayout.rand(seed, ix, jz, 941, 5);
+        int gap = 12 + CityLayout.rand(seed, ix, jz, 942, 5);
+        int shortLen = alongX ? lz1 - lz0 : lx1 - lx0;
+        int rows = Math.max(1, (shortLen + gap) / (depth + gap));
+        if (lot.district == SPARSE) rows = Math.min(rows, 3);
+        int used = rows * depth + (rows - 1) * gap;
+        int off = (shortLen - used) / 2;
+        java.util.ArrayList<Building> list = new java.util.ArrayList<>();
+        for (int rI = 0; rI < rows; rI++) {
+            int s0 = (alongX ? lz0 : lx0) + off + rI * (depth + gap), s1 = s0 + depth - 1;
+            int a0 = alongX ? lx0 : lz0, a1 = alongX ? lx1 : lz1;
+            // 긴 동은 110칸 이하로 나눔
+            int segs = Math.max(1, (a1 - a0 + 12) / 122);
+            int segLen = (a1 - a0 + 1 - (segs - 1) * 12) / segs;
+            for (int sI = 0; sI < segs; sI++) {
+                int b0 = a0 + sI * (segLen + 12), b1 = b0 + segLen - 1;
+                int bx0 = alongX ? b0 : s0, bx1 = alongX ? b1 : s1, bz0 = alongX ? s0 : b0, bz1 = alongX ? s1 : b1;
+                int[] t = trimForPlazas(bx0, bz0, bx1, bz1, 14);
+                if (t == null) continue;
+                int maxTop = Integer.MIN_VALUE;
+                for (int a = 0; a <= 4; a++) for (int b = 0; b <= 4; b++) {
+                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, t[0] + (t[2] - t[0]) * a / 4, t[1] + (t[3] - t[1]) * b / 4);
+                    if (l != null) maxTop = Math.max(maxTop, l.maxY());
+                }
+                if (maxTop == Integer.MIN_VALUE) continue;
+                Building bd = new Building();
+                bd.style = APARTMENT;
+                bd.x0 = t[0]; bd.z0 = t[1]; bd.x1 = t[2]; bd.z1 = t[3];
+                bd.id = (int) (CityLayout.hash01(seed, ix * 31 + rI, jz * 17 + sI, 943) * Integer.MAX_VALUE);
+                bd.base = maxTop + 1;
+                bd.fh = 5;
+                bd.cs = 12;
+                bd.cw = 1;
+                bd.openSky = openSky(p, seed, k, (t[0] + t[2]) / 2, (t[1] + t[3]) / 2);
+                double hr = CityLayout.hash01(seed, bd.id, rI, 944);
+                int h = lot.district == DENSE ? 45 + (int) (55 * hr) : 20 + (int) (25 * hr);
+                h = Math.min(h, p.buildingMaxHeight());
+                h = Math.min(h, ceilingFor(p, seed, k, t[0], t[1], t[2], t[3]) - bd.base - 4);
+                bd.floors = h / bd.fh;
+                if (bd.floors < 3) continue;
+                bd.wallKeep = 0.97;
+                bd.dmg = 0.03 + 0.12 * CityLayout.hash01(seed, bd.id, 0, 945);
+                if (bd.openSky) bd.dmg += 0.15;
+                list.add(bd);
+            }
+        }
+        lot.buildings = list.toArray(new Building[0]);
+        return lot;
+    }
+
+    /** 석상 마당: 구획 안에 격자로 늘어선 기둥 석상(몇몇은 크고, 몇몇은 부러짐). */
+    private static void buildStatueYard(CityLayout.Params p, long seed, int k, int ix, int jz, Lot lot,
+                                        int lx0, int lz0, int lx1, int lz1) {
+        int sp = 13 + CityLayout.rand(seed, ix, jz, 950, 4);
+        int nx = Math.max(1, (lx1 - lx0 - 8) / sp + 1), nz = Math.max(1, (lz1 - lz0 - 8) / sp + 1);
+        lot.sp = sp; lot.nx = nx; lot.nz = nz;
+        lot.gx0 = lx0 + 4 + ((lx1 - lx0 - 8) - (nx - 1) * sp) / 2;
+        lot.gz0 = lz0 + 4 + ((lz1 - lz0 - 8) - (nz - 1) * sp) / 2;
+        lot.statues = new Landmarks.Statue[nx * nz];
+        boolean sparse = lot.district == SPARSE;
+        int faceAll = CityLayout.rand(seed, ix, jz, 951, 4);
+        for (int i = 0; i < nx; i++) {
+            for (int j = 0; j < nz; j++) {
+                double hr = CityLayout.hash01(seed, ix * 64 + i, jz * 64 + j, 952 + k);
+                if (hr < (sparse ? 0.55 : 0.18)) continue;                     // 빈자리
+                int cx = lot.gx0 + i * sp + CityLayout.rand(seed, ix * 64 + i, jz * 64 + j, 953, 3) - 1;
+                int cz = lot.gz0 + j * sp + CityLayout.rand(seed, ix * 64 + i, jz * 64 + j, 954, 3) - 1;
+                if (nearGrid(cx, cz, PLAZA_CLEAR)) continue;
+                CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, cx, cz);
+                if (l == null) continue;
+                boolean big = CityLayout.hash01(seed, cx, cz, 955) < 0.12;
+                int hw = big ? 2 : 1;
+                int h = big ? 20 + CityLayout.rand(seed, cx, cz, 956, 9) : 11 + CityLayout.rand(seed, cx, cz, 957, 8);
+                int ceil = ceilingFor(p, seed, k, cx, cz, cx, cz);
+                h = Math.min(h, ceil - l.maxY() - 4);
+                if (h < 6) continue;
+                int face = CityLayout.hash01(seed, cx, cz, 958) < 0.7 ? faceAll : CityLayout.rand(seed, cx, cz, 959, 4);
+                boolean broken = CityLayout.hash01(seed, cx, cz, 960) < (lot.district == OPEN ? 0.18 : 0.1);
+                lot.statues[i + j * nx] = new Landmarks.Statue(cx, cz, l.maxY() + 1, h, hw, face, broken);
+            }
+        }
+    }
+
+    static Landmarks.Statue statueAt(CityLayout.Params p, long seed, int k, int x, int z) {
+        int[] u = warp(p, seed, k, x, z);
+        int ix = cellX(seed, k, u[0]), jz = cellZ(seed, k, u[1]);
+        for (int a = -1; a <= 1; a++) {
+            for (int b = -1; b <= 1; b++) {
+                Landmarks.Statue st = lot(p, seed, k, ix + a, jz + b).statueNear(x, z);
+                if (st != null) return st;
+            }
+        }
+        return null;
+    }
+
+    /** 아파트(2층): 외벽이 거의 온전하고 창이 규칙적으로 뚫려 있다. 유리는 대부분 남아 있고 드물게 불이 켜진 창이 있다. */
+    static BlockState apartmentBlock(long seed, Building b, int x, int y, int z, int deckTop) {
+        if (y <= deckTop) return null;
+        if (y < b.base) return B_FOUND;
+        int lx = x - b.x0, lz = z - b.z0, w = b.w(), d = b.d();
+        // 지붕은 대체로 온전하고, 군데군데만 몇 층이 무너져 내림
+        int hgt = b.floors * b.fh;
+        double n = CityLayout.noise(seed, x, z, 18.0, 972 + (b.id & 255));
+        int top = b.nominalTop() - (int) Math.round(hgt * Math.min(1.0, b.dmg * 6) * Math.max(0, n - 0.6) * 2.5);
+        boolean perim = lx == 0 || lz == 0 || lx == w - 1 || lz == d - 1;
+        if (y == b.nominalTop() + 1 && perim && top >= b.nominalTop()) return A_FRAME;   // 옥상 난간
+        if (y > top) return null;
+        int rel = y - b.base, f = rel / b.fh, ry = rel % b.fh;
+        if (ry == 0) {
+            if (f > 0 && CityLayout.noise(seed, x + f * 131, z, 9.0, 970) > 0.9 - 0.3 * b.dmg) return null;
+            return B_SLAB;
+        }
+        boolean longX = w >= d;
+        int along = longX ? lx : lz, alongLen = longX ? w : d;
+        if (Math.floorMod(along, b.cs) == 0 && !(perim)) {
+            // 세대 사이 벽(문 구멍 있음)
+            int across = longX ? lz : lx, acrossLen = longX ? d : w;
+            if (Math.abs(across - acrossLen / 2) <= 1 && ry <= 3) return null;
+            return A_WALL;
+        }
+        if (!perim) return null;
+        boolean corner = (lx == 0 || lx == w - 1) && (lz == 0 || lz == d - 1);
+        if (corner) return A_FRAME;
+        int pos = (lx == 0 || lx == w - 1) ? lz : lx;
+        if (Math.floorMod(pos, 4) == 0) return A_FRAME;                     // 창틀 기둥
+        if (ry >= 2 && ry <= 3 && Math.floorMod(pos, 4) != 0) {
+            if (f == 0 && Math.floorMod(pos, 24) >= 9 && Math.floorMod(pos, 24) <= 14 && (lx == 0 || lx == w - 1) == !longX) {
+                return null;                                                  // 1층 출입구(긴 면)
+            }
+            double r = CityLayout.hash01(seed, x * 3 + f, z, 971);
+            if (r < 0.02) return WINDOW_LIT;
+            if (r < 0.3 + 0.4 * b.dmg) return null;                           // 깨진 창
+            return WINDOW;
+        }
+        if (f == 0 && ry >= 1 && ry <= 3 && Math.floorMod(pos, 24) >= 9 && Math.floorMod(pos, 24) <= 14 && (lx == 0 || lx == w - 1) == !longX) {
+            return null;
+        }
+        return A_WALL;
     }
 
     /** 무너진 정도를 반영한 이 컬럼의 건물 꼭대기. */
@@ -519,10 +734,12 @@ final class DistrictLayout {
             int lj = (dza <= dzb) ? jz : jz + 1;                // 가까운 가로 도로
             boolean ns = dx <= ROAD_HALF && nsRoad(p, seed, k, li, jz);
             boolean ew = dz <= ROAD_HALF && ewRoad(p, seed, k, ix, lj);
-            dc.bld = buildingAt(p, seed, k, x, z);
+            Landmarks.Site site = Landmarks.siteAt(p, seed, k, x, z);
+            dc.st = site != null ? site : buildingAt(p, seed, k, x, z);
+            if (dc.st == null && Landmarks.cityLayer(p, k)) dc.st = statueAt(p, seed, k, x, z);
 
-            if (dc.bld != null) {
-                any = true;                                     // 건물이 도로보다 우선(휘어진 도로 가장자리)
+            if (dc.st != null) {
+                any = true;                                     // 구조물이 도로보다 우선(휘어진 도로 가장자리, 기지/사원 안)
             } else if ((ns || ew) && onTalus) {
                 // 도로가 잔해 비탈에 묻힘: 아무것도 하지 않음
             } else if (ns || ew) {
@@ -559,7 +776,7 @@ final class DistrictLayout {
             }
 
             // 윗면만 파인 자국과 돌무더기(광장, 건물 안, 잔해 비탈 제외)
-            if (!plaza && !onTalus && dc.bld == null && dc.light == L_NONE) {
+            if (!plaza && !onTalus && dc.st == null && dc.light == L_NONE) {
                 int cr = crater(p, seed, k, x, z);
                 if (cr > 0) {
                     int lim = layer.top() - (layer.bottom() + CityLayout.MIN_THICK - 1);
@@ -578,20 +795,23 @@ final class DistrictLayout {
         }
 
         // 눈: 하늘로 열린 곳의 맨 위 표면
-        if (snow > 0 && dc.light == L_NONE && !(layer.slab() && dc.bld == null && dc.pile == 0)) {   // 반 블록 위에는 눈이 버티지 못함
+        if (snow > 0 && dc.light == L_NONE && !(layer.slab() && dc.st == null && dc.pile == 0)) {   // 반 블록 위에는 눈이 버티지 못함
             int topSolid = dc.top + dc.pile;
-            if (dc.bld != null) topSolid = Math.max(topSolid, buildingTopSolid(seed, dc.bld, x, z, layer.top()));
-            dc.snowY = topSolid + 1;
-            if (snow == 2 && dc.bld == null && dc.pile == 0 && dc.surface != S_CRATER
+            if (dc.st != null) {
+                topSolid = Math.max(topSolid, structTopSolid(seed, dc.st, x, z, layer.top()));
+                if (structSnowBlocked(seed, dc.st, x, topSolid, z, layer.top())) topSolid = Integer.MIN_VALUE;
+            }
+            dc.snowY = topSolid == Integer.MIN_VALUE ? -1 : topSolid + 1;
+            if (snow == 2 && dc.st == null && dc.pile == 0 && dc.surface != S_CRATER
                     && CityLayout.noise(seed, x, z, 24.0, 893) > 0.62) {
                 dc.surface = S_SNOWBANK;
             }
-            any = true;
+            any = any || dc.snowY >= 0;
         }
 
         if (!any) return null;
         int mx = dc.top + dc.pile;
-        if (dc.bld != null) mx = Math.max(mx, dc.bld.nominalTop() + 5);
+        if (dc.st != null) mx = Math.max(mx, dc.st.maxY());
         if (dc.light == L_STUB) mx = Math.max(mx, dc.top + dc.lightH);
         else if (dc.light != L_NONE) mx = Math.max(mx, dc.top + POLE_H + 2);
         if (dc.snowY >= 0) mx = Math.max(mx, dc.snowY);
@@ -619,11 +839,18 @@ final class DistrictLayout {
         return r < 0.9 ? L_ON : L_OFF;
     }
 
-    private static int buildingTopSolid(long seed, Building b, int x, int z, int deckTop) {
-        for (int y = b.nominalTop() + 5; y > deckTop; y--) {
-            if (buildingBlock(seed, b, x, y, z, deckTop) != null) return y;
+    private static int structTopSolid(long seed, Landmarks.Struct st, int x, int z, int deckTop) {
+        for (int y = st.maxY(); y > deckTop; y--) {
+            if (st.block(seed, x, y, z, deckTop) != null) return y;
         }
         return deckTop;
+    }
+
+    /** 맨 위 블록이 반 블록, 유리, 빛 블록이면 눈을 얹지 않는다(버티지 못하거나 어색함). */
+    private static boolean structSnowBlocked(long seed, Landmarks.Struct st, int x, int y, int z, int deckTop) {
+        if (y <= deckTop) return false;
+        BlockState b = st.block(seed, x, y, z, deckTop);
+        return b == null || b == STEP_SLAB || b == WINDOW || b == WINDOW_LIT || b == RUNWAY_LIGHT;
     }
 
     // ---------------- 블록 ----------------
@@ -638,8 +865,8 @@ final class DistrictLayout {
     /** 장식이 정한 블록, 없으면 null(판이나 공기가 그대로). layerTop은 판의 원래 윗면(파이기 전). */
     static BlockState decorBlock(long seed, Decor dc, int x, int y, int z) {
         if (y == dc.snowY) return SNOW;
-        if (dc.bld != null) {
-            BlockState s = buildingBlock(seed, dc.bld, x, y, z, dc.top);
+        if (dc.st != null) {
+            BlockState s = dc.st.block(seed, x, y, z, dc.top);
             if (s != null) return s;
         }
         if (y == dc.top) {

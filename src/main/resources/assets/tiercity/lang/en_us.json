@@ -1,5 +1,10 @@
 {
   "generator.tiercity.layered_city": "Tier City",
   "message.tiercity.items_recovered": "You fell into the abyss. Your items were left on the nearest deck at (%s, %s, %s).",
-  "block.tiercity.sky_panel": "Artificial Sky Panel"
+  "block.tiercity.sky_panel": "Artificial Sky Panel",
+  "message.tiercity.not_city": "This command only works in a Tier City world.",
+  "message.tiercity.site_not_found": "No %s found nearby.",
+  "message.tiercity.site_found": "%s: %s %s %s (%s blocks away)",
+  "tiercity.site.temple": "Temple",
+  "tiercity.site.airbase": "Air base"
 }
