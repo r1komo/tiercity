@@ -24,6 +24,8 @@ public final class TierCityConfig {
     private static final ForgeConfigSpec.DoubleValue TALUS_CHANCE;
     private static final ForgeConfigSpec.IntValue TALUS_MAX_HEIGHT;
     private static final ForgeConfigSpec.IntValue HOLE_MAX;
+    private static final ForgeConfigSpec.DoubleValue BUILDING_DENSITY;
+    private static final ForgeConfigSpec.IntValue BUILDING_MAX_HEIGHT;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -63,6 +65,10 @@ public final class TierCityConfig {
                 .defineInRange("talusMaxHeight", 5, 1, 12);
         HOLE_MAX = b.comment("Limits the size of holes: a missing fragment keeps being missing only if at most this many of its neighbours are also missing. 0 = single-fragment holes, 1 = up to two fragments, higher = bigger holes.")
                 .defineInRange("holeMaxNeighbors", 0, 0, 6);
+        BUILDING_DENSITY = b.comment("How many city lots on the lowest layer get a ruined building (1.0 = as in the original, 0 = none).")
+                .defineInRange("buildingDensity", 1.0D, 0.0D, 2.0D);
+        BUILDING_MAX_HEIGHT = b.comment("Maximum height of ruined buildings in blocks (they also always stay below the layer above).")
+                .defineInRange("buildingMaxHeight", 100, 10, 200);
         SPEC = b.build();
     }
 
@@ -73,7 +79,8 @@ public final class TierCityConfig {
             return new CityLayout.Params(RADIUS.get(), SPAWN_X.get(), SPAWN_Z.get(), FRAGMENT_SIZE.get(),
                     HEIGHT_RANGE.get(), BIG_STEP.get(), BIG_PROB.get(), REMOVAL_BASE.get(),
                     REMOVAL_RIM.get(), CRACK_HALF_MAX.get(), CRACK_CHANCE.get(), TERRAIN_AMP.get(), TILT_MAX.get(),
-                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get(), LAYERS.get(), TOP_RADIUS.get(), CityLayout.Params.DEFAULT.debrisChance(), HOLE_MAX.get());
+                    TALUS_CHANCE.get(), TALUS_MAX_HEIGHT.get(), LAYERS.get(), TOP_RADIUS.get(), CityLayout.Params.DEFAULT.debrisChance(), HOLE_MAX.get(),
+                    BUILDING_DENSITY.get(), BUILDING_MAX_HEIGHT.get());
         } catch (IllegalStateException e) {
             return CityLayout.Params.DEFAULT;
         }

@@ -55,11 +55,11 @@ public final class TierCityEvents {
         if (len > 0.5) {
             int qx = (int) Math.round(d[0] + vx / len * 3.0);
             int qz = (int) Math.round(d[1] + vz / len * 3.0);
-            CityLayout.Layer q = CityLayout.layerAt(params, seed, d[3], qx, qz);
-            if (q != null) {
+            int qy = CityLayout.standAt(params, seed, d[3], qx, qz);
+            if (qy >= 0) {
                 tx = qx;
                 tz = qz;
-                ty = q.standY();
+                ty = qy;
             }
         }
 

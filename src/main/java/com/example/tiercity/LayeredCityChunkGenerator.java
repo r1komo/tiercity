@@ -82,6 +82,17 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                             }
                         }
                     }
+                    // 판 위 도시(도로, 건물, 가로등, 돌무더기, 눈): 판 윗면을 덮어쓰고 그 위를 채운다
+                    for (DistrictLayout.Decor d : col.decor()) {
+                        if (d == null) continue;
+                        int topY = Math.min(CityLayout.MIN_Y + CityLayout.HEIGHT - 1, d.maxY);
+                        for (int y = d.top; y <= topY; y++) {
+                            BlockState s = DistrictLayout.decorBlock(seed, d, wx, y, wz);
+                            if (s != null && !s.isAir()) {
+                                chunk.setBlockState(pos.set(wx, y, wz), s, false);
+                            }
+                        }
+                    }
                     for (int ry : col.rodY()) {
                         if (ry < 0) continue;
                         chunk.setBlockState(pos.set(wx, ry, wz), CityLayout.rodBlock(), false);

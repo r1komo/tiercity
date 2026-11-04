@@ -57,9 +57,10 @@ public final class CityLayout {
     public record Params(int radius, int spawnX, int spawnZ, int fragmentSize, int heightRange,
                          int bigStep, double bigProb, double removalBase, double removalRim,
                          double crackHalfMax, double crackChance, double terrainAmp, double tiltMax,
-                         double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax) {
+                         double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax,
+                         double buildingDensity, int buildingMaxHeight) {
         public static final Params DEFAULT =
-                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0);
+                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0, 1.0, 100);
 
         /** k층(0 = 최하층)의 반지름: R(k) = R0 - b*ln(1+k), 최상층에서 topRadius. */
         public double layerRadius(int k) {
@@ -111,7 +112,8 @@ public final class CityLayout {
      * layers[k] == null 이면 그 층에는 판이 없음. pillar != null 이면 기둥 후보 컬럼.
      * rodY[k] >= 0 이면 k층의 떨어져 나간 자리로 뻗은 철근(그 높이와 위 한 칸, 2칸 굵기).
      */
-    public record Column(Layer[] layers, int pillarTop, int rebarTop, Pillar pillar, int pillarYtop, int[] rodY, Tower tower) {
+    public record Column(Layer[] layers, int pillarTop, int rebarTop, Pillar pillar, int pillarYtop, int[] rodY, Tower tower,
+                         DistrictLayout.Decor[] decor) {
         public boolean hasDeck() {
             for (Layer l : layers) if (l != null) return true;
             return false;
@@ -129,6 +131,7 @@ public final class CityLayout {
             for (int y : rodY) if (y >= 0) t = Math.max(t, y + 1);
             if (pillar != null) t = Math.max(t, Math.max(pillarTop, rebarTop));
             if (tower != null) t = Math.max(t, tower.wallTop);
+            for (DistrictLayout.Decor d : decor) if (d != null) t = Math.max(t, d.maxY);
             return t;
         }
     }
@@ -168,7 +171,7 @@ public final class CityLayout {
     }
 
     // ---------------- 해시/노이즈 ----------------
-    private static long hash(long seed, int a, int b, int salt) {
+    static long hash(long seed, int a, int b, int salt) {
         long h = seed ^ (a * 0x9E3779B97F4A7C15L + b * 0xC2B2AE3D27D4EB4FL + salt * 0x165667B19E3779F9L);
         h ^= h >>> 32;
         h *= 0xD6E8FEB86659FD93L;
@@ -176,15 +179,15 @@ public final class CityLayout {
         return h;
     }
 
-    private static int rand(long seed, int a, int b, int salt, int bound) {
+    static int rand(long seed, int a, int b, int salt, int bound) {
         return (int) ((hash(seed, a, b, salt) >>> 33) % bound);
     }
 
-    private static double hash01(long seed, int a, int b, int salt) {
+    static double hash01(long seed, int a, int b, int salt) {
         return (hash(seed, a, b, salt) >>> 11) * (1.0 / (1L << 53));
     }
 
-    private static double noise(long seed, double x, double z, double cell, int salt) {
+    static double noise(long seed, double x, double z, double cell, int salt) {
         double fx = x / cell, fz = z / cell;
         int ix = (int) Math.floor(fx), iz = (int) Math.floor(fz);
         double tx = fx - ix, tz = fz - iz;
@@ -767,7 +770,7 @@ public final class CityLayout {
         long r2 = (long) wx * wx + (long) wz * wz;
         long R0 = p.radius();
         long lim0 = R0 + PILLAR_MAX_R + TILT_MARGIN + PILLAR_SPACING + 4L * RIM_STEP;
-        if (r2 > lim0 * lim0) return new Column(layers, -1, -1, null, 0, rodY, null);
+        if (r2 > lim0 * lim0) return new Column(layers, -1, -1, null, 0, rodY, null, new DistrictLayout.Decor[n]);
 
         Hit h = locate(seed, p.fragmentSize(), wx, wz);
         LayerInfo[] infos = new LayerInfo[n];
@@ -819,7 +822,36 @@ public final class CityLayout {
                 }
             }
         }
-        return new Column(layers, pillarTop, rebarTop, pil, pYtop, rodY, tw);
+        // 판 위 도시(도로, 가로등, 건물, 파인 자국, 돌무더기, 눈)
+        DistrictLayout.Decor[] decor = new DistrictLayout.Decor[n];
+        if (tw == null) {
+            for (int k = 0; k < n; k++) {
+                Layer l = layers[k];
+                if (l == null && insideRim(p, seed, k, wx, wz)) {
+                    // 건물 밑을 지나는 균열이나 구멍 가장자리는 건물 기초가 메운다(건물에 틈이 생기지 않게)
+                    DistrictLayout.Building b = DistrictLayout.buildingAt(p, seed, k, wx, wz);
+                    if (b != null) {
+                        l = new Layer(b.base - 1, layerBottom(k), b.base - 1, false, false, 0);
+                        layers[k] = l;
+                        rodY[k] = -1;
+                    }
+                }
+                if (l == null) continue;
+                DistrictLayout.Decor d = DistrictLayout.decorate(p, seed, k, wx, wz, l);
+                if (d == null) continue;
+                decor[k] = d;
+                if (d.top != l.top()) {
+                    layers[k] = new Layer(d.top, l.bottom(), Math.min(l.baseTop(), d.top), false, false, l.debris());
+                }
+            }
+        }
+        return new Column(layers, pillarTop, rebarTop, pil, pYtop, rodY, tw, decor);
+    }
+
+    /** 판 위 장식을 뺀 k층 판(건물 터 고르기용). */
+    static Layer baseLayer(Params p, long seed, int k, int wx, int wz) {
+        if (k < 0 || k >= p.layers() || !insideRim(p, seed, k, wx, wz)) return null;
+        return computeLayer(p, seed, k, locate(seed, p.fragmentSize(), wx, wz), wx, wz, new LayerInfo(), false);
     }
 
     /** k층 하나만 조회(스폰/탐색용, 잔해 포함). 판이 없으면 null. */
@@ -930,6 +962,11 @@ public final class CityLayout {
         for (int r : rods) {
             if (r >= 0 && (y == r || y == r + 1)) return REBAR;
         }
+        for (DistrictLayout.Decor d : c.decor()) {
+            if (d == null || y < d.top || y > d.maxY) continue;
+            BlockState ds = DistrictLayout.decorBlock(seed, d, x, y, z);
+            if (ds != null) return ds;
+        }
         for (Layer l : c.layers()) {
             if (l != null && y >= l.bottom() && y <= l.maxY()) return deckBlock(seed, l, x, y, z);
         }
@@ -937,15 +974,30 @@ public final class CityLayout {
     }
 
     // ---------------- 탐색 ----------------
+    /** k층 (x, z)에서 설 수 있는 y, 설 수 없으면 -1(판 없음, 건물/가로등/기둥 자리). */
+    private static int standY(Column c, int k) {
+        if (k < 0 || k >= c.layers().length) return -1;
+        Layer l = c.layers()[k];
+        if (l == null || c.hasTower() || c.hasPillar()) return -1;
+        DistrictLayout.Decor d = c.decor()[k];
+        if (d == null) return l.standY();
+        if (d.blocksStanding()) return -1;
+        return Math.max(l.standY(), d.standY());
+    }
+
+    public static int standAt(Params p, long seed, int layer, int x, int z) {
+        return standY(column(p, seed, x, z), layer);
+    }
+
     private static int[] deckAt(Params p, long seed, int layer, int x, int z) {
         Column c = column(p, seed, x, z);
         if (layer >= 0) {
-            Layer l = layer < c.layers().length ? c.layers()[layer] : null;
-            return l == null ? null : new int[]{x, z, l.standY(), layer};
+            int y = standY(c, layer);
+            return y < 0 ? null : new int[]{x, z, y, layer};
         }
         for (int k = c.layers().length - 1; k >= 0; k--) {
-            Layer l = c.layers()[k];
-            if (l != null) return new int[]{x, z, l.standY(), k};
+            int y = standY(c, k);
+            if (y >= 0) return new int[]{x, z, y, k};
         }
         return null;
     }
