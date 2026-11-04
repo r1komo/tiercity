@@ -68,7 +68,7 @@ public final class TierCityConfig {
         BUILDING_DENSITY = b.comment("How many city lots on the lowest layer get a ruined building (1.0 = as in the original, 0 = none).")
                 .defineInRange("buildingDensity", 1.0D, 0.0D, 2.0D);
         BUILDING_MAX_HEIGHT = b.comment("Maximum height of ruined buildings in blocks (they also always stay below the layer above).")
-                .defineInRange("buildingMaxHeight", 100, 10, 200);
+                .defineInRange("buildingMaxHeight", 160, 10, 400);
         SPEC = b.build();
     }
 

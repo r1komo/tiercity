@@ -60,7 +60,7 @@ public final class CityLayout {
                          double talusChance, int talusMaxHeight, int layers, int topRadius, double debrisChance, int holeMax,
                          double buildingDensity, int buildingMaxHeight) {
         public static final Params DEFAULT =
-                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0, 1.0, 100);
+                new Params(80000, 300, 0, 96, 2, 8, 0.03, 0.08, 0.25, 2.0, 0.2, 10.0, 0.06, 0.4, 5, 4, 4000, 0.75, 0, 1.0, 160);
 
         /** k층(0 = 최하층)의 반지름: R(k) = R0 - b*ln(1+k), 최상층에서 topRadius. */
         public double layerRadius(int k) {
