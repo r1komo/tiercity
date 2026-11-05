@@ -8,9 +8,9 @@ import java.util.HashMap;
 import java.util.SplittableRandom;
 
 /**
- * 시작 지점: 최하층 판 아래, 거대한 배관이 제멋대로 얽힌 어두운 공간(원작 1화).
- * 조명은 없다. 빛은 판이 찢어진 틈으로만 들어온다. 바닥은 무너진 잔해, 벽은 없다(가장자리 밖은 허공).
- * 스폰 근처 잔해에 묻힌 굵은 배관 하나가 위로 비스듬히 뻗어 판의 찢어진 틈을 지나 지상 위로 부러진 채 솟아 있다.
+ * 시작 지점: 최하층 판 아래 허공에 배관이 매달려 얽힌 어두운 공간(원작 1화).
+ * 조명도 바닥도 벽도 없다. 빛은 판이 찢어진 틈으로만 들어온다. 배관은 판 아랫면에 매달리거나 다른 배관에서 갈라져 나온다.
+ * 깊은 곳의 굵은 배관 위에서 시작하고, 그 배관이 이어져 판의 찢어진 틈을 지나 지상 위로 부러진 채 솟아 있다.
  * 그 배관 등을 타고 오르면(점프 포함) 자연스럽게 지상으로 나온다.
  * (설정, 시드)만으로 결과가 정해진다.
  */
@@ -21,17 +21,15 @@ final class StartComplex {
     static volatile boolean enabled = true;
 
     static final int HALF = 120;
-    static final int F0 = 66;                                     // 잔해 바닥 기준 윗면 y
+    static final int DEPTH = 120;                                 // 판 아랫면에서 배관이 내려가는 깊이
     static final int CEIL = CityLayout.layerBottom(0) - 1;        // 판 아랫면 바로 아래 y(97)
     static final int CLEAR_ABOVE = 30;                            // 찢어진 틈 위를 비우는 높이
     // 판이 찢어진 틈(스폰 설정 좌표 기준, 거칠게 깎임)
     static final int HX0 = -22, HX1 = 44, HZ0 = -27, HZ1 = 3;
-    static final int SPAWN_DX = -72, SPAWN_DZ = 50;
+    static final int SPAWN_DX = -84, SPAWN_DZ = 60;
     static final int ROUTE_R = 3;
 
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
-    private static final BlockState[] RUBBLE = {Blocks.GRAY_CONCRETE.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(),
-            Blocks.ANDESITE.defaultBlockState(), Blocks.CRACKED_STONE_BRICKS.defaultBlockState(), Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState()};
     private static final BlockState[] PIPE = {Blocks.GRAY_CONCRETE.defaultBlockState(), Blocks.POLISHED_ANDESITE.defaultBlockState(),
             Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState(), Blocks.WAXED_WEATHERED_CUT_COPPER.defaultBlockState(),
             Blocks.POLISHED_DEEPSLATE.defaultBlockState()};
@@ -125,15 +123,6 @@ final class StartComplex {
         return h;
     }
 
-    /** 잔해 바닥 윗면(바닥이 없으면 MIN). */
-    static int floorTop(long seed, Hall h, int x, int z) {
-        int dx = x - h.cx, dz = z - h.cz;
-        double edge = HALF - 4 - 10 * CityLayout.noise(seed, x, z, 14.0, 7411);
-        if (Math.max(Math.abs(dx), Math.abs(dz)) > edge) return Integer.MIN_VALUE;
-        double n = CityLayout.noise(seed, x, z, 10.0, 7412) * 2.2 + CityLayout.noise(seed, x, z, 3.0, 7413) * 1.3;
-        return F0 - 1 + (int) Math.floor(n);
-    }
-
     private static Hall build(CityLayout.Params p, long seed) {
         Hall h = new Hall();
         h.cx = p.spawnX(); h.cz = p.spawnZ();
@@ -141,59 +130,80 @@ final class StartComplex {
         h.ytop = l != null ? l.top() : CityLayout.LEVEL_BASE;
         h.spx = h.cx + SPAWN_DX; h.spz = h.cz + SPAWN_DZ;
 
-        // 오르는 길: 잔해에 묻힌 끝 → 판 아래를 따라 → 찢어진 틈을 지나 지상 위로 부러진 끝
+        // 오르는 길: 깊은 곳의 시작 배관 → 비스듬히 올라 판 아래를 따라 → 찢어진 틈을 지나 지상 위로 부러진 끝
         double r = ROUTE_R;
-        double y0 = F0 - 3, y1 = 88;
+        double y0 = CEIL - 100, yMid = CEIL - 30, y1 = CEIL - 9;
         double ex = HX1 - 2, xs = HX0 + 6, xe = HX1 + 12;
         double yEnd = y1 + (h.ytop - 1 - y1) * (xe - xs) / (ex - xs);
+        int cx = h.cx, cz = h.cz;
         h.route = new Seg[]{
-                new Seg(h.cx - 66, y0, h.cz + 50, h.cx - 16, y1, h.cz + 50, r, 0),
-                new Seg(h.cx - 16, y1, h.cz + 50, h.cx - 16, y1, h.cz - 12, r, 0),
-                new Seg(h.cx - 16, y1, h.cz - 12, h.cx + xe, yEnd, h.cz - 12, r, 0)};
-        h.route[2].broken = true;
+                new Seg(cx - 96, y0, cz + 60, cx - 60, y0, cz + 60, r, 0),
+                new Seg(cx - 60, y0, cz + 60, cx + 60, yMid, cz + 60, r, 0),
+                new Seg(cx + 60, yMid, cz + 60, cx + 60, y1, cz + 24, r, 0),
+                new Seg(cx + 60, y1, cz + 24, cx - 16, y1, cz + 24, r, 0),
+                new Seg(cx - 16, y1, cz + 24, cx - 16, y1, cz - 12, r, 0),
+                new Seg(cx - 16, y1, cz - 12, cx + xe, yEnd, cz - 12, r, 0)};
+        h.route[h.route.length - 1].broken = true;
         for (Seg s : h.route) s.smooth = true;
-        int fy = floorTop(seed, h, h.spx, h.spz);
-        h.spy = (fy == Integer.MIN_VALUE ? F0 - 1 : fy) + 1;
+        h.spy = (int) Math.floor(y0 + r + 0.45 - 0.5) + 1;
+        while (h.spy > y0 && pipeAtRaw(h.route, h.spx, h.spy - 1, h.spz) == null) h.spy--;
+        while (pipeAtRaw(h.route, h.spx, h.spy, h.spz) != null) h.spy++;
 
-        SplittableRandom rng = new SplittableRandom(CityLayout.hash(seed, h.cx, h.cz, 7414));
+        SplittableRandom rng = new SplittableRandom(CityLayout.hash(seed, h.cx, h.cz, 7424));
         ArrayList<Seg> segs = new ArrayList<>();
         for (Seg s : h.route) segs.add(s);
-        int lo = -HALF + 10, hi = HALF - 10;
+        ArrayList<Seg> free = new ArrayList<>();
+        int lo = -HALF + 10, hi = HALF - 10, yLo = CEIL - DEPTH;
         int tries = 0;
-        while (segs.size() < 140 && tries++ < 1200) {
+        while (free.size() < 70 && tries++ < 3000) {
             double q = rng.nextDouble();
-            double rad = q < 0.25 ? 2 : q < 0.55 ? 3 + rng.nextInt(2) : q < 0.85 ? 5 + rng.nextInt(2) : 7;
-            double ax = h.cx + lo + rng.nextInt(hi - lo), az = h.cz + lo + rng.nextInt(hi - lo);
-            double ay = F0 - rad + rng.nextDouble() * (CEIL + rad - (F0 - rad));
-            // 방향: 대체로 눕거나 서 있지만 기울기는 제각각
+            double rad = q < 0.4 ? 1 : q < 0.75 ? 2 : q < 0.9 ? 3 : q < 0.97 ? 4 : 5;
+            // 시작점: 판 아랫면에 매달리거나, 이미 있는 배관에서 갈라져 나옴
+            double ax, ay, az;
+            if (free.isEmpty() || rng.nextDouble() < 0.4) {
+                ax = h.cx + lo + rng.nextInt(hi - lo); az = h.cz + lo + rng.nextInt(hi - lo); ay = CEIL - rad + 1;
+            } else {
+                Seg o = free.get(rng.nextInt(free.size()));
+                double t = rng.nextDouble();
+                ax = o.ax + (o.bx - o.ax) * t; ay = o.ay + (o.by - o.ay) * t; az = o.az + (o.bz - o.az) * t;
+            }
             double kind = rng.nextDouble();
             double yaw = rng.nextDouble() * Math.PI * 2;
-            double pitch = kind < 0.55 ? (rng.nextDouble() - 0.5) * 0.5 : kind < 0.8 ? (rng.nextDouble() - 0.5) * 1.4
-                    : (rng.nextBoolean() ? 1 : -1) * (1.15 + rng.nextDouble() * 0.42);
-            if (kind < 0.3) yaw = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2);   // 일부는 반듯한 방향
-            double L = 30 + rng.nextInt(120);
+            double pitch;
+            if (kind < 0.3) pitch = -(1.25 + rng.nextDouble() * 0.32);                 // 아래로 늘어진 배관
+            else if (kind < 0.8) pitch = (rng.nextDouble() - 0.5) * 0.4;              // 거의 수평
+            else pitch = (rng.nextDouble() - 0.6) * 1.6;                              // 비스듬히
+            if (kind >= 0.3 && kind < 0.6) yaw = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2);
+            double L = 25 + rng.nextInt(110);
             double bx = ax + Math.cos(yaw) * Math.cos(pitch) * L, bz = az + Math.sin(yaw) * Math.cos(pitch) * L;
             double by = ay + Math.sin(pitch) * L;
-            // 공간 안으로 자름
             double t = 1;
             if (bx < h.cx + lo) t = Math.min(t, (h.cx + lo - ax) / (bx - ax));
             if (bx > h.cx + hi) t = Math.min(t, (h.cx + hi - ax) / (bx - ax));
             if (bz < h.cz + lo) t = Math.min(t, (h.cz + lo - az) / (bz - az));
             if (bz > h.cz + hi) t = Math.min(t, (h.cz + hi - az) / (bz - az));
-            if (by < F0 - rad - 2) t = Math.min(t, (F0 - rad - 2 - ay) / (by - ay));
-            if (by > CEIL + rad) t = Math.min(t, (CEIL + rad - ay) / (by - ay));
-            if (t < 0.15) continue;
+            if (by < yLo) t = Math.min(t, (yLo - ay) / (by - ay));
+            if (by > CEIL - rad + 1) t = Math.min(t, (CEIL - rad + 1 - ay) / (by - ay));
+            if (t < 0.2) continue;
             bx = ax + (bx - ax) * t; by = ay + (by - ay) * t; bz = az + (bz - az) * t;
             Seg s = new Seg(ax, ay, az, bx, by, bz, rad, pickMat(rng));
+            if (by < CEIL - 20 && rng.nextDouble() < 0.5) s.broken = true;            // 아래쪽 끝이 부러진 배관
             if (!clear(h, s)) continue;
+            free.add(s);
             segs.add(s);
         }
-        // 찢어진 틈으로 함께 솟아오른 굵은 배관 몇 개(부러진 끝)
-        for (int i = 0; i < 6; i++) {
-            double rad = 3 + rng.nextInt(3);
+        // 오르는 길을 받치는 줄기: 시작 배관 아래로 늘어진 배관, 경사 배관을 판에 매다는 배관
+        for (double[] sp : new double[][]{{cx - 92, y0, cz + 60, -1}, {cx - 64, y0, cz + 60, -1}, {cx + 2, (y0 + yMid) / 2, cz + 60, -1}}) {
+            Seg s = new Seg(sp[0], sp[1] - 2, sp[2], sp[0] + rng.nextInt(9) - 4, sp[1] - 30 - rng.nextInt(30), sp[2] + rng.nextInt(9) - 4, 2, pickMat(rng));
+            s.broken = true;
+            segs.add(s);
+        }
+        // 찢어진 틈으로 함께 솟아오른 배관 몇 개(부러진 끝)
+        for (int i = 0; i < 5; i++) {
+            double rad = 2 + rng.nextInt(2);
             double ax = h.cx + HX0 + 4 + rng.nextInt(HX1 - HX0 - 8), az = h.cz + (rng.nextBoolean() ? HZ0 + 3 + rng.nextInt(5) : HZ1 - 3 - rng.nextInt(5));
             double bx = ax + (rng.nextDouble() - 0.5) * 30, bz = az + (az < h.cz - 12 ? -1 : 1) * (4 + rng.nextInt(10));
-            Seg s = new Seg(ax, F0 + rng.nextInt(10), az, bx, h.ytop + 3 + rng.nextInt(10), bz, rad, pickMat(rng));
+            Seg s = new Seg(ax, CEIL - 40 + rng.nextInt(20), az, bx, h.ytop + 3 + rng.nextInt(10), bz, rad, pickMat(rng));
             s.broken = true;
             if (clear(h, s)) segs.add(s);
         }
@@ -201,19 +211,36 @@ final class StartComplex {
         return h;
     }
 
+    private static BlockState pipeAtRaw(Seg[] list, int x, int y, int z) {
+        for (Seg g : list) {
+            double[] d = g.dist(x + 0.5, y + 0.5, z + 0.5);
+            if (d[0] <= (g.r + 0.45) * (g.r + 0.45)) return PIPE[0];
+        }
+        return null;
+    }
+
     private static int pickMat(SplittableRandom rng) {
         double m = rng.nextDouble();
         return m < 0.4 ? 0 : m < 0.62 ? 1 : m < 0.75 ? 2 : m < 0.87 ? 3 : 4;
     }
 
-    /** 오르는 길 위(머리 공간 포함)와 스폰 둘레를 막지 않는지. */
+    /** 오르는 길 위와 옆(머리 공간 포함), 스폰 둘레를 막지 않는지. 길 아래로 지나가는 것은 괜찮다. */
     private static boolean clear(Hall h, Seg s) {
-        for (Seg rt : h.route) {
-            if (rt.near(s) < s.r + ROUTE_R + 4) return false;
-            if (s.near(rt) < s.r + ROUTE_R + 4) return false;
+        int n = Math.max(2, (int) (s.len / 1.5));
+        for (int i = 0; i <= n; i++) {
+            double t = i / (double) n;
+            double px = s.ax + (s.bx - s.ax) * t, py = s.ay + (s.by - s.ay) * t, pz = s.az + (s.bz - s.az) * t;
+            for (Seg rt : h.route) {
+                double[] d = rt.dist(px, py, pz);
+                double dist = Math.sqrt(d[0]);
+                if (dist >= s.r + ROUTE_R + 5) continue;
+                double ry = rt.ay + (rt.by - rt.ay) * (rt.len < 1e-9 ? 0 : d[1] / rt.len);
+                if (py + s.r > ry - ROUTE_R - 1 || dist < s.r + ROUTE_R + 1) return false;
+            }
+            double ds = Math.sqrt((px - h.spx) * (px - h.spx) + (py - h.spy) * (py - h.spy) + (pz - h.spz) * (pz - h.spz));
+            if (ds < s.r + 5) return false;
         }
-        double[] d = s.dist(h.spx, F0 + 2, h.spz);
-        return Math.sqrt(d[0]) > s.r + 7;
+        return true;
     }
 
     static boolean inHole(long seed, Hall h, int x, int z) {
@@ -223,7 +250,7 @@ final class StartComplex {
         return Math.min(ex, ez) > rough;
     }
 
-    static int minY() { return F0 - 6; }
+    static int minY() { return CEIL - DEPTH - 8; }
 
     static int maxY(Hall h) { return h.ytop + CLEAR_ABOVE; }
 
@@ -277,12 +304,6 @@ final class StartComplex {
             return null;
         }
         if (y < minY()) return null;
-        BlockState ps = pipeAt(seed, h, x, y, z);
-        if (ps != null) return ps;
-        int ft = floorTop(seed, h, x, z);
-        if (ft != Integer.MIN_VALUE && y <= ft && y >= F0 - 4) {
-            return RUBBLE[CityLayout.rand(seed, x * 31 + y, z, 7420, RUBBLE.length)];
-        }
-        return null;
+        return pipeAt(seed, h, x, y, z);
     }
 }

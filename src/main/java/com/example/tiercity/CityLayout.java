@@ -23,7 +23,7 @@ public final class CityLayout {
     public static final int MIN_Y = 0;
     public static final int HEIGHT = 768;
 
-    public static final int LEVEL_BASE = 128;      // 최하층 판 윗면 기준 y
+    public static final int LEVEL_BASE = 224;      // 최하층 판 윗면 기준 y(아래로 배관 공간이 넉넉하도록 높임)
     public static final int LAYER_SPACING = 160;   // 층 간격
     public static final int MAX_LAYERS = 4;
     public static final int UNDER = 30;            // 판 아랫면: 층 기준 높이에서 이만큼 아래의 완전한 평면(윗면만 오르내림)
