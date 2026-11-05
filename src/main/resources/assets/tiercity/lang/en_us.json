@@ -6,5 +6,12 @@
   "message.tiercity.site_not_found": "No %s found nearby.",
   "message.tiercity.site_found": "%s: %s %s %s (%s blocks away)",
   "tiercity.site.temple": "Temple",
-  "tiercity.site.airbase": "Air base"
+  "tiercity.site.airbase": "Air base",
+  "block.tiercity.statue_stone": "Statue Stone",
+  "block.tiercity.statue_face": "Statue Face",
+  "block.tiercity.statue_eye_left": "Statue Left Eye",
+  "block.tiercity.statue_eye_right": "Statue Right Eye",
+  "block.tiercity.statue_mouth_left": "Statue Mouth (Left)",
+  "block.tiercity.statue_mouth_right": "Statue Mouth (Right)",
+  "block.tiercity.statue_head": "Statue Head"
 }

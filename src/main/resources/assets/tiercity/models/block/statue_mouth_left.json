@@ -1,0 +1,9 @@
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "particle": "tiercity:block/statue_stone",
+    "front": "tiercity:block/statue_mouth_left",
+    "side": "tiercity:block/statue_stone",
+    "top": "tiercity:block/statue_stone"
+  }
+}

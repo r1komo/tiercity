@@ -18,13 +18,13 @@ final class DistrictLayout {
     private DistrictLayout() {}
 
     // ---------------- 수치 ----------------
-    static final int ROAD_SPACING = 150;     // 도로 간격(평균)
+    static final int ROAD_SPACING = 260;     // 큰길 간격(평균). 큰길 사이 구획은 골목으로 잘게 쪼개진다
     static final int ROAD_JITTER = 36;       // 도로 위치 흔들림
     static final int ROAD_HALF = 5;          // 도로 반폭(가운데 포함 11칸, 양끝 1칸은 연석)
     static final double WARP_MAX = 55;       // 바깥쪽에서 도로가 격자를 벗어나 휘는 정도
     static final double WARP_CELL = 300;
     static final double ROAD_DROP = 0.18;    // 도로 한 구간이 없는 확률(구획이 합쳐져 보임)
-    static final int LIGHT_STEP = 30;        // 가로등 간격
+    static final int LIGHT_STEP = 12;        // 큰길 가로등 간격(양쪽 모두)
     static final int POLE_H = 8;
     static final int CRATER_CELL = 40;
     static final int PILE_CELL = 28;
@@ -224,13 +224,33 @@ final class DistrictLayout {
         return Math.sqrt(dx * dx + dz * dz);
     }
 
-    // ---------------- 건물 ----------------
+    // ---------------- 도시 조직: 큰길 사이 구획을 잘게 쪼갠 부지와 골목 ----------------
     static final int RUIN = 0, APARTMENT = 1;
 
-    static final class Building implements Landmarks.Struct {
-        int x0, z0, x1, z1, base, fh, floors, cs, cw, id, style;
+    /** 건물의 한 덩어리: 사각형(구멍 하나 가능)이 f0층부터 f1-1층까지 차지. */
+    static final class Vol {
+        int x0, z0, x1, z1, f0, f1;
+        int hx0 = 1, hz0 = 1, hx1 = 0, hz1 = 0;
+
+        Vol(int x0, int z0, int x1, int z1, int f0, int f1) {
+            this.x0 = x0; this.z0 = z0; this.x1 = x1; this.z1 = z1; this.f0 = f0; this.f1 = f1;
+        }
+
+        boolean inPlan(int x, int z) {
+            return x >= x0 && x <= x1 && z >= z0 && z <= z1 && !(x >= hx0 && x <= hx1 && z >= hz0 && z <= hz1);
+        }
+
+        boolean has(int x, int z, int f) { return f >= f0 && f < f1 && inPlan(x, z); }
+    }
+
+    static final class Building extends Landmarks.Piece {
+        int base, fh, floors, cs, cw, id, style, k;
         double wallKeep, dmg;
         boolean openSky;
+        Vol[] vols;
+        int balconySides;                     // 비트: 0 서(-x), 1 동(+x), 2 북(-z), 3 남(+z)
+        int stairX = Integer.MIN_VALUE, stairZ, stairF;
+        int[][] doors = new int[0][];         // 다리 출입구 {x0, z0, x1, z1, y}
 
         @Override
         public BlockState block(long seed, int x, int y, int z, int deckTop) {
@@ -240,25 +260,135 @@ final class DistrictLayout {
         @Override
         public int maxY() { return nominalTop() + 5; }
 
-        int w() { return x1 - x0 + 1; }
-        int d() { return z1 - z0 + 1; }
+        @Override
+        public int topHint(int x, int z) { return Math.min(maxY(), base + topF(x, z) * fh + 5); }
+
         int nominalTop() { return base + floors * fh; }
-        boolean contains(int x, int z) { return x >= x0 && x <= x1 && z >= z0 && z <= z1; }
+
+        boolean cov(int x, int z, int f) {
+            for (Vol v : vols) if (v.has(x, z, f)) return true;
+            return false;
+        }
+
+        /** 이 컬럼의 층 수(가장 높은 덩어리 기준). */
+        int topF(int x, int z) {
+            int t = 0;
+            for (Vol v : vols) if (v.inPlan(x, z)) t = Math.max(t, v.f1);
+            return t;
+        }
+
+        /** f층에서 벽이 빠진 방향 비트(0 서, 1 동, 2 북, 3 남). 0이면 내부. */
+        int missing(int x, int z, int f) {
+            int m = 0;
+            if (!cov(x - 1, z, f)) m |= 1;
+            if (!cov(x + 1, z, f)) m |= 2;
+            if (!cov(x, z - 1, f)) m |= 4;
+            if (!cov(x, z + 1, f)) m |= 8;
+            return m;
+        }
+
+        boolean door(int x, int y, int z) {
+            for (int[] d : doors) {
+                if (x >= d[0] && x <= d[2] && z >= d[1] && z <= d[3] && y > d[4] && y <= d[4] + 3) return true;
+            }
+            return false;
+        }
+
+        int stairC(int x, int z) {
+            if (stairX == Integer.MIN_VALUE) return 99;
+            return Math.max(Math.abs(x - stairX), Math.abs(z - stairZ));
+        }
+    }
+
+    /** 골목 위 설치물: 0 배관(축 방향 원통), 1 다리, 2 가로등. */
+    static final class Fx {
+        int type, axis, x0, z0, x1, z1, y, r, mat, light;
+
+        boolean covers(int x, int z) {
+            int m = type == 0 ? r + (r >= 1 ? 1 : 0) : 0;
+            if (type == 0) {
+                if (axis == 0) return x >= x0 && x <= x1 && Math.abs(z - z0) <= m;
+                return z >= z0 && z <= z1 && Math.abs(x - x0) <= m;
+            }
+            return x >= x0 && x <= x1 && z >= z0 && z <= z1;
+        }
+
+        int top() { return type == 0 ? y + r + 1 : type == 1 ? y + 1 : Integer.MIN_VALUE; }
+    }
+
+    /** 부지 사이의 골목(쪼갠 틈). axis 0: 틈이 x 방향으로 벌어짐(골목은 z 방향으로 뻗음). */
+    static final class Alley extends Landmarks.Piece {
+        int axis, gap;
+        Fx[] fx = new Fx[0];
+
+        @Override public BlockState block(long seed, int x, int y, int z, int deckTop) { return null; }
+        @Override public int maxY() { return 0; }
+    }
+
+    /** 한 컬럼에 걸친 골목 설치물만 모은 것(장식용). */
+    static final class AlleyCol implements Landmarks.Struct {
+        final Fx[] fx;
+        final int k;
+        final int max;
+
+        AlleyCol(Fx[] fx, int k, int max) { this.fx = fx; this.k = k; this.max = max; }
+
+        @Override
+        public BlockState block(long seed, int x, int y, int z, int deckTop) {
+            for (Fx f : fx) {
+                BlockState s = fxBlock(seed, f, k, x, y, z, deckTop);
+                if (s != null) return s;
+            }
+            return null;
+        }
+
+        @Override public int maxY() { return max; }
     }
 
     static final class Lot {
-        int district;
+        int district, bx0, bz0, nbx, nbz;
         Building[] buildings = new Building[0];
-        // 석상 마당: 원점(gx0, gz0)에서 간격 sp로 nx x nz 격자, 칸마다 석상 하나(없으면 null)
-        int gx0, gz0, sp, nx, nz;
-        Landmarks.Statue[] statues;
+        java.util.ArrayList<Landmarks.Piece>[] buckets;
 
-        Landmarks.Statue statueNear(int x, int z) {
-            if (statues == null) return null;
-            int i = Math.round((x - gx0) / (float) sp), j = Math.round((z - gz0) / (float) sp);
-            if (i < 0 || j < 0 || i >= nx || j >= nz) return null;
-            Landmarks.Statue st = statues[i + j * nx];
-            return (st != null && st.contains(x, z)) ? st : null;
+        Landmarks.Piece find(int x, int z) {
+            if (buckets == null) return null;
+            int i = Math.floorDiv(x, 16) - bx0, j = Math.floorDiv(z, 16) - bz0;
+            if (i < 0 || j < 0 || i >= nbx || j >= nbz) return null;
+            java.util.ArrayList<Landmarks.Piece> l = buckets[i + j * nbx];
+            if (l == null) return null;
+            for (Landmarks.Piece pc : l) if (pc.contains(x, z)) return pc;
+            return null;
+        }
+
+        @SuppressWarnings("unchecked")
+        void index(java.util.List<Landmarks.Piece> pieces, int x0, int z0, int x1, int z1) {
+            bx0 = Math.floorDiv(x0, 16); bz0 = Math.floorDiv(z0, 16);
+            nbx = Math.floorDiv(x1, 16) - bx0 + 1; nbz = Math.floorDiv(z1, 16) - bz0 + 1;
+            buckets = new java.util.ArrayList[nbx * nbz];
+            for (Landmarks.Piece pc : pieces) {
+                for (int i = Math.max(0, Math.floorDiv(pc.x0, 16) - bx0); i <= Math.min(nbx - 1, Math.floorDiv(pc.x1, 16) - bx0); i++) {
+                    for (int j = Math.max(0, Math.floorDiv(pc.z0, 16) - bz0); j <= Math.min(nbz - 1, Math.floorDiv(pc.z1, 16) - bz0); j++) {
+                        if (buckets[i + j * nbx] == null) buckets[i + j * nbx] = new java.util.ArrayList<>(4);
+                        buckets[i + j * nbx].add(pc);
+                    }
+                }
+            }
+        }
+
+        /** (x, z)에서 r 이내에 있는 건물 중 가장 가까운 거리(없으면 큰 값). */
+        double nearBuilding(int x, int z, double r, double minDmg) {
+            if (buckets == null) return 1e9;
+            double best = 1e9;
+            for (int i = Math.floorDiv((int) (x - r), 16) - bx0; i <= Math.floorDiv((int) (x + r), 16) - bx0; i++) {
+                for (int j = Math.floorDiv((int) (z - r), 16) - bz0; j <= Math.floorDiv((int) (z + r), 16) - bz0; j++) {
+                    if (i < 0 || j < 0 || i >= nbx || j >= nbz || buckets[i + j * nbx] == null) continue;
+                    for (Landmarks.Piece pc : buckets[i + j * nbx]) {
+                        if (!(pc instanceof Building) || ((Building) pc).dmg < minDmg) continue;
+                        best = Math.min(best, rectDist(pc.x0, pc.z0, pc.x1, pc.z1, x + 0.5, z + 0.5));
+                    }
+                }
+            }
+            return best;
         }
     }
 
@@ -270,153 +400,549 @@ final class DistrictLayout {
         Lot cached = cache.get(key);
         if (cached != null) return cached;
         Lot lot = buildLot(p, seed, k, ix, jz);
-        if (cache.size() > 4096) cache.clear();
+        if (cache.size() > 2048) cache.clear();
         cache.put(key, lot);
         return lot;
+    }
+
+    /** 쪼개기 규칙(층별). */
+    private static final class Ctx {
+        CityLayout.Params p;
+        long seed;
+        int k, ix, jz, minPlot, maxPlot, base, fh, ceil;
+        double stop;
+        boolean city, mega;
+        java.util.SplittableRandom rng;
+        java.util.ArrayList<int[]> plots = new java.util.ArrayList<>();
+        java.util.ArrayList<Alley> alleys = new java.util.ArrayList<>();
     }
 
     private static Lot buildLot(CityLayout.Params p, long seed, int k, int ix, int jz) {
         Lot lot = new Lot();
         lot.district = lotDistrict(p, seed, k, ix, jz);
-        if (Landmarks.cityLayer(p, k)) return buildCityLot(p, seed, k, ix, jz, lot);
-        if (k != 0) return lot;
+        boolean city = Landmarks.cityLayer(p, k);
+        if ((k != 0 && !city) || isFinalLayer(p, k)) return lot;
         if (merged(p, seed, k, ix - 1, jz)) return lot;           // 서쪽 구획과 합쳐짐: 건물은 서쪽 구획이 지음
         boolean mega = merged(p, seed, k, ix, jz);
-        int lx0 = lineX(seed, k, ix) + ROAD_HALF + 1, lx1 = lineX(seed, k, ix + (mega ? 2 : 1)) - ROAD_HALF - 1;
-        int lz0 = lineZ(seed, k, jz) + ROAD_HALF + 1, lz1 = lineZ(seed, k, jz + 1) - ROAD_HALF - 1;
-        if (lx1 - lx0 < 18 || lz1 - lz0 < 18) return lot;
+        int margin = city ? ROAD_HALF + 3 : ROAD_HALF + 1;
+        int lx0 = lineX(seed, k, ix) + margin, lx1 = lineX(seed, k, ix + (mega ? 2 : 1)) - margin;
+        int lz0 = lineZ(seed, k, jz) + margin, lz1 = lineZ(seed, k, jz + 1) - margin;
+        if (lx1 - lx0 < 24 || lz1 - lz0 < 24) return lot;
 
-        double r = CityLayout.hash01(seed, ix, jz, 830);
-        double chance = mega ? 1.0 : (lot.district == DENSE ? 0.95 : lot.district == SPARSE ? 0.75 : 0.2);
-        if (r >= chance * p.buildingDensity()) return lot;
+        Ctx c = new Ctx();
+        c.p = p; c.seed = seed; c.k = k; c.ix = ix; c.jz = jz; c.city = city; c.mega = mega;
+        c.rng = new java.util.SplittableRandom(CityLayout.hash(seed, ix, jz, 7100 + 31 * k));
+        if (city) { c.minPlot = 14; c.maxPlot = 56; c.stop = 0.3; c.fh = 5; }
+        else { c.minPlot = 16; c.maxPlot = mega ? 180 : 72; c.stop = 0.3; c.fh = 6; }
 
-        int[][] rects;
-        int w = lx1 - lx0 + 1, d = lz1 - lz0 + 1;
-        if (!mega && Math.max(w, d) > 110 && CityLayout.hash01(seed, ix, jz, 831) < 0.6) {
-            double f = 0.35 + 0.3 * CityLayout.hash01(seed, ix, jz, 832);
-            int gap = 5;
-            if (w >= d) {
-                int sx = lx0 + (int) (w * f);
-                rects = new int[][]{{lx0, lz0, sx - gap, lz1}, {sx + gap, lz0, lx1, lz1}};
-            } else {
-                int sz = lz0 + (int) (d * f);
-                rects = new int[][]{{lx0, lz0, lx1, sz - gap}, {lx0, sz + gap, lx1, lz1}};
-            }
-        } else {
-            rects = new int[][]{{lx0, lz0, lx1, lz1}};
+        // 구획 전체가 같은 기초 높이(다리와 층이 이웃 건물끼리 맞도록)
+        int maxTop = Integer.MIN_VALUE;
+        for (int a = 0; a <= 8; a++) for (int b = 0; b <= 8; b++) {
+            CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, lx0 + (lx1 - lx0) * a / 8, lz0 + (lz1 - lz0) * b / 8);
+            if (l != null) maxTop = Math.max(maxTop, l.top());
         }
+        if (maxTop == Integer.MIN_VALUE) return lot;
+        c.base = maxTop + 1;
+        c.ceil = ceilingFor(p, seed, k, lx0, lz0, lx1, lz1);
 
+        split(c, lx0, lz0, lx1, lz1, 0);
+
+        java.util.ArrayList<Landmarks.Piece> pieces = new java.util.ArrayList<>();
         java.util.ArrayList<Building> list = new java.util.ArrayList<>();
-        for (int bi = 0; bi < rects.length; bi++) {
-            int[] rc = rects[bi];
-            int salt = bi * 13;
-            int sx0 = rc[0] + 1 + CityLayout.rand(seed, ix, jz, 840 + salt, 6);
-            int sx1 = rc[2] - 1 - CityLayout.rand(seed, ix, jz, 841 + salt, 6);
-            int sz0 = rc[1] + 1 + CityLayout.rand(seed, ix, jz, 842 + salt, 6);
-            int sz1 = rc[3] - 1 - CityLayout.rand(seed, ix, jz, 843 + salt, 6);
-            if (sx1 - sx0 < 15 || sz1 - sz0 < 15) continue;
-
-            // 탑 광장과 기둥 둘레는 비워 둔다: 건물을 그쪽 면에서 잘라 냄(가장 넓게 남는 쪽)
-            boolean blocked = false;
-            int[] gx = {CityLayout.towerCoord(sx0), CityLayout.towerCoord(sx1)};
-            int[] gz = {CityLayout.towerCoord(sz0), CityLayout.towerCoord(sz1)};
-            for (int a : gx) for (int b : gz) {
-                if (rectDist(sx0, sz0, sx1, sz1, a, b) >= PLAZA_CLEAR) continue;
-                int c = PLAZA_CLEAR + 1;
-                int[][] opt = {{a + c, sz0, sx1, sz1}, {sx0, sz0, a - c, sz1}, {sx0, b + c, sx1, sz1}, {sx0, sz0, sx1, b - c}};
-                long bestArea = -1;
-                int[] best = null;
-                for (int[] o : opt) {
-                    int ox0 = Math.max(sx0, o[0]), oz0 = Math.max(sz0, o[1]), ox1 = Math.min(sx1, o[2]), oz1 = Math.min(sz1, o[3]);
-                    if (ox1 - ox0 < 15 || oz1 - oz0 < 15) continue;
-                    long ar = (long) (ox1 - ox0) * (oz1 - oz0);
-                    if (ar > bestArea) { bestArea = ar; best = new int[]{ox0, oz0, ox1, oz1}; }
-                }
-                if (best == null) { blocked = true; break; }
-                sx0 = best[0]; sz0 = best[1]; sx1 = best[2]; sz1 = best[3];
-            }
-            if (blocked) continue;
-
-            // 휘어진 도로가 건물을 지나가지 않는지(둘레를 따라 확인)
-            for (int t = 0; t <= 2 * ((sx1 - sx0) + (sz1 - sz0)) && !blocked; t += 5) {
-                int px, pz, ww = sx1 - sx0, dd = sz1 - sz0;
-                if (t <= ww) { px = sx0 + t; pz = sz0; }
-                else if (t <= ww + dd) { px = sx1; pz = sz0 + (t - ww); }
-                else if (t <= 2 * ww + dd) { px = sx1 - (t - ww - dd); pz = sz1; }
-                else { px = sx0; pz = sz1 - (t - 2 * ww - dd); }
-                if (roadAt(p, seed, k, px, pz)) blocked = true;
-            }
-            if (blocked) continue;
-
-            // 판이 온전한지(구멍 위에 짓지 않음)와 기초 높이
-            // 균열이나 작은 구멍 위는 기초가 메운다. 판이 크게 비어 있으면 짓지 않음.
-            int maxTop = Integer.MIN_VALUE, missing = 0;
-            for (int a = 0; a <= 6; a++) {
-                for (int b = 0; b <= 6; b++) {
-                    int px = sx0 + (sx1 - sx0) * a / 6, pz = sz0 + (sz1 - sz0) * b / 6;
-                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, px, pz);
-                    if (l == null) { missing++; continue; }
-                    maxTop = Math.max(maxTop, l.maxY());
-                }
-            }
-            if (missing > 6 || maxTop == Integer.MIN_VALUE) continue;
-
-            Building bd = new Building();
-            bd.x0 = sx0; bd.x1 = sx1; bd.z0 = sz0; bd.z1 = sz1;
-            bd.id = (int) (CityLayout.hash01(seed, ix * 7 + bi, jz, 844) * Integer.MAX_VALUE);
-            bd.base = maxTop + 1;
-            bd.openSky = openSky(p, seed, k, (sx0 + sx1) / 2, (sz0 + sz1) / 2);
-            bd.fh = CityLayout.hash01(seed, ix, jz, 845 + salt) < 0.6 ? 6 : 7;
-            bd.cs = (mega ? 11 : 9) + CityLayout.rand(seed, ix, jz, 846 + salt, 5);
-            bd.cw = bd.cs >= 11 ? 3 : 2;
-
-            int minH, maxH;
-            if (mega) { minH = 90; maxH = 400; }
-            else if (lot.district == DENSE) { minH = 45; maxH = 140; }
-            else if (lot.district == SPARSE) { minH = 15; maxH = 60; }
-            else { minH = 6; maxH = 22; }
-            maxH = Math.min(maxH, p.buildingMaxHeight());
-            minH = Math.min(minH, maxH);
-            double hr = CityLayout.hash01(seed, ix, jz, 847 + salt);
-            int h = minH + (int) ((maxH - minH) * Math.pow(hr, 0.6));
-            int ceil = Integer.MAX_VALUE;
-            boolean covered = false;
-            for (int a : new int[]{sx0, sx1}) for (int b : new int[]{sz0, sz1}) {
-                if (k + 1 < p.layers() && CityLayout.insideRim(p, seed, k + 1, a, b)) covered = true;
-            }
-            if (covered || (k + 1 < p.layers() && !bd.openSky)) ceil = CityLayout.layerBottom(k + 1) - CEILING_MARGIN;
-            h = Math.min(h, ceil - bd.base - 4);
-            bd.floors = h / bd.fh;
-            if (bd.floors < 2) continue;
-
-            double kw = CityLayout.hash01(seed, ix, jz, 848 + salt);
-            double kd = CityLayout.hash01(seed, ix, jz, 849 + salt);
-            if (lot.district == DENSE) { bd.wallKeep = 0.55 + 0.35 * kw; bd.dmg = 0.12 + 0.33 * kd; }
-            else { bd.wallKeep = 0.25 + 0.35 * kw; bd.dmg = 0.40 + 0.35 * kd; }
-            if (bd.openSky) { bd.wallKeep *= 0.7; bd.dmg = Math.min(0.9, bd.dmg + 0.15); }
-            if (CityLayout.hash01(seed, ix, jz, 850 + salt) < 0.12) bd.dmg = 0.85;   // 거의 다 무너진 건물
-            list.add(bd);
+        boolean warped = outskirt(p, k, (lx0 + lx1) / 2.0, (lz0 + lz1) / 2.0) > 0.01;
+        int pi = 0;
+        for (int[] pl : c.plots) {
+            pi++;
+            makePlot(c, lot, pl, pi, warped, pieces, list);
         }
         lot.buildings = list.toArray(new Building[0]);
+        pieces.addAll(c.alleys);
+        lot.index(pieces, lx0 - 2, lz0 - 2, lx1 + 2, lz1 + 2);
+        for (Alley al : c.alleys) furnishAlley(c, lot, al);
         return lot;
     }
 
-    /** (x, z)를 덮는 건물(없으면 null). 도로 위는 항상 null. */
-    static Building buildingAt(CityLayout.Params p, long seed, int k, int x, int z) {
+    private static int gapWidth(Ctx c, int depth) {
+        if (depth == 0) return c.city ? 6 + c.rng.nextInt(3) : 8 + c.rng.nextInt(4);
+        double r = c.rng.nextDouble();
+        if (c.city) {
+            if (r < 0.38) return 0;
+            if (r < 0.73) return 2 + c.rng.nextInt(2);
+            return 4 + c.rng.nextInt(3);
+        }
+        if (r < 0.25) return 0;
+        if (r < 0.55) return 2 + c.rng.nextInt(2);
+        if (r < 0.85) return 4 + c.rng.nextInt(3);
+        return 7 + c.rng.nextInt(3);
+    }
+
+    private static void split(Ctx c, int x0, int z0, int x1, int z1, int depth) {
+        int w = x1 - x0 + 1, d = z1 - z0 + 1;
+        int gap = gapWidth(c, depth);
+        boolean canX = w >= 2 * c.minPlot + gap, canZ = d >= 2 * c.minPlot + gap;
+        boolean small = w <= c.maxPlot && d <= c.maxPlot;
+        if ((!canX && !canZ) || (small && depth > 0 && c.rng.nextDouble() < c.stop) || depth > 9) {
+            c.plots.add(new int[]{x0, z0, x1, z1});
+            return;
+        }
+        boolean alongX;
+        if (canX && canZ) alongX = w > d * 1.25 || (d <= w * 1.25 && c.rng.nextBoolean());
+        else alongX = canX;
+        int len = alongX ? w : d;
+        int lo = alongX ? x0 : z0;
+        double f = 0.3 + 0.4 * c.rng.nextDouble();
+        int pos = lo + Math.max(c.minPlot, Math.min(len - c.minPlot - gap, (int) Math.round((len - gap) * f)));
+        if (alongX) {
+            split(c, x0, z0, pos - 1, z1, depth + 1);
+            if (gap > 0) addAlley(c, pos, z0, pos + gap - 1, z1, 0, gap);
+            split(c, pos + gap, z0, x1, z1, depth + 1);
+        } else {
+            split(c, x0, z0, x1, pos - 1, depth + 1);
+            if (gap > 0) addAlley(c, x0, pos, x1, pos + gap - 1, 1, gap);
+            split(c, x0, pos + gap, x1, z1, depth + 1);
+        }
+    }
+
+    private static void addAlley(Ctx c, int x0, int z0, int x1, int z1, int axis, int gap) {
+        Alley a = new Alley();
+        a.x0 = x0; a.z0 = z0; a.x1 = x1; a.z1 = z1; a.axis = axis; a.gap = gap;
+        c.alleys.add(a);
+    }
+
+    private static boolean blockedRect(Ctx c, int x0, int z0, int x1, int z1, boolean warped) {
+        CityLayout.Params p = c.p;
+        if (c.k == 0 && StartComplex.exitOverlaps(p, c.seed, x0, z0, x1, z1, 8)) return true;
+        if (c.city && Landmarks.overlapsSite(p, c.seed, c.k, x0, z0, x1, z1, 10)) return true;
+        if (warped) {
+            for (int t = 0; t <= 2 * ((x1 - x0) + (z1 - z0)); t += 4) {
+                int px, pz, ww = x1 - x0, dd = z1 - z0;
+                if (t <= ww) { px = x0 + t; pz = z0; }
+                else if (t <= ww + dd) { px = x1; pz = z0 + (t - ww); }
+                else if (t <= 2 * ww + dd) { px = x1 - (t - ww - dd); pz = z1; }
+                else { px = x0; pz = z1 - (t - 2 * ww - dd); }
+                if (roadAt(p, c.seed, c.k, px, pz)) return true;
+            }
+        }
+        int missing = 0;
+        for (int a = 0; a <= 2; a++) for (int b = 0; b <= 2; b++) {
+            if (CityLayout.baseLayer(p, c.seed, c.k, x0 + (x1 - x0) * a / 2, z0 + (z1 - z0) * b / 2) == null) missing++;
+        }
+        return missing > 2;
+    }
+
+    private static void makePlot(Ctx c, Lot lot, int[] pl, int pi, boolean warped,
+                                 java.util.List<Landmarks.Piece> pieces, java.util.List<Building> list) {
+        CityLayout.Params p = c.p;
+        long seed = c.seed;
+        java.util.SplittableRandom r = new java.util.SplittableRandom(CityLayout.hash(seed, c.ix * 977 + pi, c.jz, 7200 + 31 * c.k));
+        int sb = c.city ? 2 : 2;
+        int x0 = pl[0] + r.nextInt(sb), z0 = pl[1] + r.nextInt(sb), x1 = pl[2] - r.nextInt(sb), z1 = pl[3] - r.nextInt(sb);
+        int[] t = trimForPlazas(x0, z0, x1, z1, c.minPlot - 6);
+        if (t == null) return;
+        x0 = t[0]; z0 = t[1]; x1 = t[2]; z1 = t[3];
+        int w = x1 - x0 + 1, d = z1 - z0 + 1;
+        if (w < 8 || d < 8) return;
+        if (blockedRect(c, x0, z0, x1, z1, warped)) return;
+
+        int dist = district(p, seed, c.k, (x0 + x1) / 2, (z0 + z1) / 2);
+        double chance;
+        if (c.city) chance = dist == DENSE ? 0.95 : dist == SPARSE ? 0.8 : 0.3;
+        else chance = c.mega ? 1.0 : dist == DENSE ? 0.95 : dist == SPARSE ? 0.72 : 0.25;
+        if (r.nextDouble() >= chance * p.buildingDensity()) {
+            if (c.city) statueGroup(c, r, x0, z0, x1, z1, pieces);
+            return;
+        }
+
+        Building b = new Building();
+        b.k = c.k;
+        b.style = c.city ? APARTMENT : RUIN;
+        b.x0 = x0; b.z0 = z0; b.x1 = x1; b.z1 = z1;
+        b.id = (int) (CityLayout.hash01(seed, c.ix * 977 + pi, c.jz, 844 + c.k) * Integer.MAX_VALUE);
+        b.base = c.base;
+        b.fh = c.fh;
+        b.openSky = openSky(p, seed, c.k, (x0 + x1) / 2, (z0 + z1) / 2);
+        b.cs = 8 + r.nextInt(5);
+        b.cw = b.cs >= 11 ? 3 : 2;
+
+        int minH, maxH;
+        if (c.city) {
+            if (dist == DENSE) { minH = 20; maxH = 65; }
+            else if (dist == SPARSE) { minH = 12; maxH = 36; }
+            else { minH = 8; maxH = 18; }
+        } else if (c.mega || (dist == DENSE && Math.min(w, d) >= 60 && r.nextDouble() < 0.3)) {
+            minH = 110; maxH = 320;                                    // 거대한 폐허
+            b.cs = 11 + r.nextInt(3); b.cw = 3;
+        } else if (dist == DENSE) { minH = 30; maxH = 140; }
+        else if (dist == SPARSE) { minH = 12; maxH = 55; }
+        else { minH = 6; maxH = 20; }
+        maxH = Math.min(maxH, p.buildingMaxHeight());
+        minH = Math.min(minH, maxH);
+        int h = minH + (int) ((maxH - minH) * Math.pow(r.nextDouble(), 0.7));
+        int ceil = ceilingFor(p, seed, c.k, x0, z0, x1, z1);
+        h = Math.min(h, ceil - b.base - 4 - b.fh * 2);
+        int F = h / b.fh;
+        if (F < 2) return;
+
+        b.vols = forms(c, r, x0, z0, x1, z1, F, Math.max(1, (ceil - b.base - 4) / b.fh));
+        int fl = 0;
+        for (Vol v : b.vols) fl = Math.max(fl, v.f1);
+        b.floors = fl;
+
+        if (c.city) {
+            b.wallKeep = 0.97;
+            b.dmg = 0.02 + 0.1 * r.nextDouble() + (b.openSky ? 0.12 : 0);
+            for (int s = 0; s < 4; s++) if (r.nextDouble() < 0.35) b.balconySides |= 1 << s;
+            placeStair(b, r);
+        } else {
+            double kw = r.nextDouble(), kd = r.nextDouble();
+            if (dist == DENSE) { b.wallKeep = 0.55 + 0.35 * kw; b.dmg = 0.12 + 0.33 * kd; }
+            else { b.wallKeep = 0.25 + 0.35 * kw; b.dmg = 0.40 + 0.35 * kd; }
+            if (b.openSky) { b.wallKeep *= 0.7; b.dmg = Math.min(0.9, b.dmg + 0.15); }
+            if (r.nextDouble() < 0.12) b.dmg = 0.85;                  // 거의 다 무너진 건물
+        }
+        pieces.add(b);
+        list.add(b);
+    }
+
+    /** 건물 모양: 상자, 계단식, 저층부 위 탑, ㄱ자, 중정형, 높이가 다른 조각들. 옥상 증축이 붙기도 한다. */
+    private static Vol[] forms(Ctx c, java.util.SplittableRandom r, int x0, int z0, int x1, int z1, int F, int maxF) {
+        java.util.ArrayList<Vol> vs = new java.util.ArrayList<>();
+        int w = x1 - x0 + 1, d = z1 - z0 + 1, mn = Math.min(w, d);
+        double q = r.nextDouble();
+        int form;
+        if (c.city) form = q < 0.22 ? 0 : q < 0.42 ? 5 : q < 0.6 ? 3 : q < 0.7 ? 4 : q < 0.82 ? 1 : 2;
+        else form = q < 0.3 ? 0 : q < 0.5 ? 5 : q < 0.65 ? 3 : q < 0.72 ? 4 : q < 0.86 ? 1 : 2;
+        if (form == 4 && mn < 26) form = 0;
+        if ((form == 1 || form == 2) && mn < 20) form = 5;
+        if (form == 5 && Math.max(w, d) < 22) form = 0;
+        if (form == 3 && mn < 16) form = 0;
+        switch (form) {
+            case 1: {   // 계단식
+                int s = Math.max(3, mn / 6);
+                int n1 = Math.max(1, (int) (F * (0.35 + 0.2 * r.nextDouble()))), n2 = Math.max(n1 + 1, (int) (F * (0.65 + 0.15 * r.nextDouble())));
+                vs.add(new Vol(x0, z0, x1, z1, 0, n1));
+                vs.add(new Vol(x0 + s, z0 + s, x1 - s, z1 - s, n1, Math.min(F, n2)));
+                if (mn - 4 * s >= 8 && n2 < F) vs.add(new Vol(x0 + 2 * s, z0 + 2 * s, x1 - 2 * s, z1 - 2 * s, n2, F));
+                break;
+            }
+            case 2: {   // 저층부 위 탑
+                int pf = Math.min(F - 1, 1 + r.nextInt(3));
+                vs.add(new Vol(x0, z0, x1, z1, 0, pf));
+                int tw = Math.max(8, (int) (w * (0.4 + 0.25 * r.nextDouble()))), td = Math.max(8, (int) (d * (0.4 + 0.25 * r.nextDouble())));
+                int tx = x0 + 2 + r.nextInt(Math.max(1, w - tw - 3)), tz = z0 + 2 + r.nextInt(Math.max(1, d - td - 3));
+                vs.add(new Vol(tx, tz, Math.min(x1 - 2, tx + tw - 1), Math.min(z1 - 2, tz + td - 1), pf, Math.min(maxF, F + F / 3)));
+                break;
+            }
+            case 3: {   // ㄱ자: 긴 날개 + 짧은 날개(높이 다름)
+                boolean ax = w >= d;
+                int cut = (int) ((ax ? d : w) * (0.45 + 0.15 * r.nextDouble()));
+                int f2 = Math.max(1, (int) (F * (0.4 + 0.5 * r.nextDouble())));
+                boolean flip = r.nextBoolean(), flip2 = r.nextBoolean();
+                if (ax) {
+                    int zs = flip ? z0 : z1 - cut + 1;
+                    vs.add(new Vol(x0, zs, x1, zs + cut - 1, 0, F));
+                    int len = (int) (w * (0.35 + 0.25 * r.nextDouble()));
+                    int xs = flip2 ? x0 : x1 - len + 1;
+                    vs.add(flip ? new Vol(xs, z0 + cut, xs + len - 1, z1, 0, f2) : new Vol(xs, z0, xs + len - 1, z1 - cut, 0, f2));
+                } else {
+                    int xs = flip ? x0 : x1 - cut + 1;
+                    vs.add(new Vol(xs, z0, xs + cut - 1, z1, 0, F));
+                    int len = (int) (d * (0.35 + 0.25 * r.nextDouble()));
+                    int zs = flip2 ? z0 : z1 - len + 1;
+                    vs.add(flip ? new Vol(x0 + cut, zs, x1, zs + len - 1, 0, f2) : new Vol(x0, zs, x1 - cut, zs + len - 1, 0, f2));
+                }
+                break;
+            }
+            case 4: {   // 중정형
+                Vol v = new Vol(x0, z0, x1, z1, 0, F);
+                int ring = 7 + r.nextInt(Math.max(1, mn / 5));
+                v.hx0 = x0 + ring; v.hz0 = z0 + ring; v.hx1 = x1 - ring; v.hz1 = z1 - ring;
+                vs.add(v);
+                break;
+            }
+            case 5: {   // 높이가 다른 조각 2~3개가 붙어 있음
+                boolean ax = w >= d;
+                int len = ax ? w : d;
+                int n = len >= 40 ? 2 + r.nextInt(2) : 2;
+                int a = ax ? x0 : z0;
+                for (int i = 0; i < n; i++) {
+                    int e = i == n - 1 ? (ax ? x1 : z1) : a + Math.max(8, (int) (len / (double) n * (0.7 + 0.6 * r.nextDouble()))) - 1;
+                    e = Math.min(e, (ax ? x1 : z1) - (n - 1 - i) * 8);
+                    int fi = Math.max(1, (int) (F * (0.35 + 0.65 * r.nextDouble())));
+                    if (i == 0) fi = F;
+                    vs.add(ax ? new Vol(a, z0, e, z1, 0, fi) : new Vol(x0, a, x1, e, 0, fi));
+                    a = e + 1;
+                    if (a > (ax ? x1 : z1)) break;
+                }
+                break;
+            }
+            default:
+                vs.add(new Vol(x0, z0, x1, z1, 0, F));
+        }
+        // 옥상 증축(작은 덩어리 한두 층)
+        if (r.nextDouble() < (c.city ? 0.45 : 0.3)) {
+            Vol top = vs.get(0);
+            for (Vol v : vs) if (v.f1 > top.f1) top = v;
+            int vw = top.x1 - top.x0 + 1, vd = top.z1 - top.z0 + 1;
+            if (vw >= 12 && vd >= 12 && top.f1 + 1 <= maxF) {
+                int aw = 5 + r.nextInt(Math.min(8, vw - 9)), ad = 5 + r.nextInt(Math.min(8, vd - 9));
+                int ax0 = top.x0 + 2 + r.nextInt(vw - aw - 3), az0 = top.z0 + 2 + r.nextInt(vd - ad - 3);
+                vs.add(new Vol(ax0, az0, ax0 + aw - 1, az0 + ad - 1, top.f1, Math.min(maxF, top.f1 + 1 + r.nextInt(2))));
+            }
+        }
+        return vs.toArray(new Vol[0]);
+    }
+
+    /** 계단실(2층 주거 건물): 가운데 3x3 기둥을 감아 오르는 2칸 폭 계단, 층마다 한 바퀴, 옥상까지. */
+    private static void placeStair(Building b, java.util.SplittableRandom r) {
+        if (b.floors < 2) return;
+        for (int tries = 0; tries < 4; tries++) {
+            Vol v = b.vols[r.nextInt(b.vols.length)];
+            if (v.f0 != 0) continue;
+            int vw = v.x1 - v.x0 + 1, vd = v.z1 - v.z0 + 1;
+            if (vw < 12 || vd < 12) continue;
+            int cx = r.nextBoolean() ? v.x0 + 5 : v.x1 - 5, cz = r.nextBoolean() ? v.z0 + 5 : v.z1 - 5;
+            // 계단실이 지나는 모든 층에서 둘레(c<=4)가 건물 안이어야 함
+            int f1 = v.f1;
+            boolean ok = true;
+            for (int f = 0; f < f1 && ok; f++) {
+                for (int a = -4; a <= 4 && ok; a += 4) for (int c = -4; c <= 4 && ok; c += 4) {
+                    if (!b.cov(cx + a, cz + c, f) || b.missing(cx + a, cz + c, f) != 0) ok = false;
+                }
+            }
+            // 옥상 출구 위를 증축이 막지 않음
+            for (Vol o : b.vols) if (o.f0 >= f1 && o.x0 <= cx + 5 && o.x1 >= cx - 5 && o.z0 <= cz + 5 && o.z1 >= cz - 5) ok = false;
+            if (!ok) continue;
+            b.stairX = cx; b.stairZ = cz; b.stairF = f1;
+            return;
+        }
+    }
+
+    /** 빈 부지(2층): 작은 석상 몇 개가 한 줄로 서 있다. */
+    private static void statueGroup(Ctx c, java.util.SplittableRandom r, int x0, int z0, int x1, int z1,
+                                    java.util.List<Landmarks.Piece> pieces) {
+        if (r.nextDouble() > 0.55) return;
+        boolean ax = (x1 - x0) >= (z1 - z0);
+        int len = ax ? x1 - x0 : z1 - z0;
+        int n = Math.min(1 + r.nextInt(5), Math.max(1, (len - 4) / 5));
+        int sp = 4 + r.nextInt(3);
+        int start = (ax ? x0 : z0) + (len - (n - 1) * sp) / 2;
+        int mid = ax ? (z0 + z1) / 2 : (x0 + x1) / 2;
+        int face = ax ? (r.nextBoolean() ? 0 : 1) : (r.nextBoolean() ? 2 : 3);
+        int ceil = ceilingFor(c.p, c.seed, c.k, x0, z0, x1, z1);
+        for (int i = 0; i < n; i++) {
+            int a = start + i * sp;
+            int sx = ax ? a : mid, sz = ax ? mid : a;
+            if (nearGrid(sx, sz, PLAZA_CLEAR)) continue;
+            CityLayout.Layer l = CityLayout.baseLayer(c.p, c.seed, c.k, sx, sz);
+            if (l == null) continue;
+            boolean big = r.nextDouble() < 0.18;
+            int h = big ? 7 + r.nextInt(4) : 4 + r.nextInt(3);
+            if (l.top() + 2 + h >= ceil) continue;
+            boolean broken = r.nextDouble() < 0.08;
+            int f = r.nextDouble() < 0.8 ? face : r.nextInt(4);
+            pieces.add(new Landmarks.Statue(sx, sz, l.top() + 1, h, big ? 2 : 1, f, broken));
+        }
+    }
+
+    // ---------------- 골목 설치물: 가로지르는 배관, 벽을 따라가는 배관, 건물 사이 다리, 가로등 ----------------
+    private static void furnishAlley(Ctx c, Lot lot, Alley al) {
+        java.util.SplittableRandom r = new java.util.SplittableRandom(CityLayout.hash(c.seed, al.x0 * 31 + al.z0, al.x1 * 17 + al.z1, 7300 + c.k));
+        java.util.ArrayList<Fx> out = new java.util.ArrayList<>();
+        boolean ax = al.axis == 0;                       // 틈이 x로 벌어짐, 골목은 z로 뻗음
+        int a0 = ax ? al.z0 : al.x0, a1 = ax ? al.z1 : al.x1;   // 골목 길이 방향 범위
+        int g0 = ax ? al.x0 : al.z0, g1 = ax ? al.x1 : al.z1;   // 틈 방향 범위
+        int len = a1 - a0 + 1;
+        // 양쪽 벽 건물(틈 바로 바깥 칸)
+        // 가로지르는 배관
+        int nCross = (int) (len / (c.city ? 9.0 : 14.0) * (0.5 + r.nextDouble()));
+        for (int i = 0; i < nCross; i++) {
+            int a = a0 + 2 + r.nextInt(Math.max(1, len - 4));
+            int rad = c.city ? (r.nextDouble() < 0.75 ? 0 : 1) : (r.nextDouble() < 0.45 ? 0 : r.nextDouble() < 0.75 ? 1 : 2);
+            Building A = sideBuilding(lot, ax, g0 - 1, a), B = sideBuilding(lot, ax, g1 + 1, a);
+            if (A == null || B == null) continue;
+            int lim = Math.min(colTopAt(c.seed, A, ax, g0 - 1, a), colTopAt(c.seed, B, ax, g1 + 1, a)) - rad - 2;
+            int lo = c.base + 4 + rad;
+            if (lim < lo) continue;
+            Fx f = new Fx();
+            f.type = 0; f.axis = ax ? 0 : 1; f.r = rad;
+            f.y = lo + r.nextInt(Math.min(lim - lo + 1, c.city ? 40 : 70));
+            if (ax) { f.x0 = g0; f.x1 = g1; f.z0 = f.z1 = a; } else { f.z0 = g0; f.z1 = g1; f.x0 = f.x1 = a; }
+            f.mat = r.nextInt(3);
+            out.add(f);
+            if (c.city && r.nextDouble() < 0.4 && rad == 0) {    // 가는 배관 묶음
+                Fx f2 = new Fx();
+                f2.type = 0; f2.axis = f.axis; f2.r = 0; f2.y = f.y + (r.nextBoolean() ? 1 : -1); f2.mat = f.mat;
+                if (ax) { f2.x0 = g0; f2.x1 = g1; f2.z0 = f2.z1 = a + 1; } else { f2.z0 = g0; f2.z1 = g1; f2.x0 = f2.x1 = a + 1; }
+                if (f2.y > c.base + 3) out.add(f2);
+            }
+        }
+        // 벽을 따라가는 배관(틈이 4칸 이상)
+        if (al.gap >= 4) {
+            int nPar = (c.city ? 1 : 0) + r.nextInt(3);
+            for (int i = 0; i < nPar; i++) {
+                boolean sideA = r.nextBoolean();
+                int g = sideA ? g0 + 1 : g1 - 1, wallG = sideA ? g0 - 1 : g1 + 1;
+                int s0 = a0 + r.nextInt(Math.max(1, len / 2)), s1 = Math.min(a1, s0 + 12 + r.nextInt(Math.max(1, len)));
+                int rad = c.city ? 0 : (r.nextDouble() < 0.5 ? 0 : 1);
+                int lim = Integer.MAX_VALUE;
+                boolean ok = true;
+                for (int t = 0; t <= 4 && ok; t++) {
+                    int a = s0 + (s1 - s0) * t / 4;
+                    Building W = sideBuilding(lot, ax, wallG, a);
+                    if (W == null) { ok = false; break; }
+                    lim = Math.min(lim, colTopAt(c.seed, W, ax, wallG, a) - rad - 2);
+                }
+                int lo = c.base + 3 + rad;
+                if (!ok || lim < lo) continue;
+                Fx f = new Fx();
+                f.type = 0; f.axis = ax ? 1 : 0; f.r = rad; f.mat = r.nextInt(3);
+                f.y = lo + r.nextInt(Math.min(lim - lo + 1, 30));
+                if (ax) { f.x0 = f.x1 = g; f.z0 = s0; f.z1 = s1; } else { f.z0 = f.z1 = g; f.x0 = s0; f.x1 = s1; }
+                out.add(f);
+            }
+        }
+        // 다리: 같은 층 높이로 양쪽 건물을 이음(출입구를 뚫음)
+        if (al.gap >= 2 && al.gap <= 12 && len >= 12) {
+            int nBr = c.city ? (r.nextDouble() < 0.75 ? 1 + r.nextInt(2) : 0) : (r.nextDouble() < 0.2 ? 1 : 0);
+            for (int i = 0; i < nBr; i++) {
+                int a = a0 + 3 + r.nextInt(Math.max(1, len - 8));
+                Building A = sideBuilding(lot, ax, g0 - 1, a), B = sideBuilding(lot, ax, g1 + 1, a);
+                Building A2 = sideBuilding(lot, ax, g0 - 1, a + 2), B2 = sideBuilding(lot, ax, g1 + 1, a + 2);
+                if (A == null || B == null || A != A2 || B != B2 || A.fh != B.fh || A.base != B.base) continue;
+                int fmax = Math.min(A.floors, B.floors) - 1;
+                if (fmax < 1) continue;
+                int f = 1 + r.nextInt(fmax);
+                int y = A.base + f * A.fh;
+                boolean ok = true;
+                for (int t = 0; t <= 2; t++) {
+                    int pa = a + t;
+                    for (int[] e : new int[][]{{g0 - 1, g0 - 2}, {g1 + 1, g1 + 2}}) {
+                        Building W = e[0] == g0 - 1 ? A : B;
+                        int wx = ax ? e[0] : pa, wz = ax ? pa : e[0], ix2 = ax ? e[1] : pa, iz2 = ax ? pa : e[1];
+                        if (!W.cov(wx, wz, f) || !W.cov(ix2, iz2, f) || W.stairC(ix2, iz2) <= 4) ok = false;
+                        if (colTopAt(c.seed, W, ax, e[0], pa) < y + 5) ok = false;
+                    }
+                }
+                if (!ok) continue;
+                Fx br = new Fx();
+                br.type = 1; br.y = y;
+                if (ax) { br.x0 = g0; br.x1 = g1; br.z0 = a; br.z1 = a + 2; } else { br.z0 = g0; br.z1 = g1; br.x0 = a; br.x1 = a + 2; }
+                br.axis = ax ? 0 : 1;
+                out.add(br);
+                int[] dA = ax ? new int[]{g0 - 1, a, g0 - 1, a + 2, y} : new int[]{a, g0 - 1, a + 2, g0 - 1, y};
+                int[] dB = ax ? new int[]{g1 + 1, a, g1 + 1, a + 2, y} : new int[]{a, g1 + 1, a + 2, g1 + 1, y};
+                A.doors = append(A.doors, dA);
+                B.doors = append(B.doors, dB);
+            }
+        }
+        // 가로등(넓은 골목 가운데 줄)
+        if (al.gap >= 5) {
+            int mid = (g0 + g1) / 2;
+            int step = c.city ? 10 : 14;
+            int off = r.nextInt(step);
+            for (int a = a0 + 3 + off; a <= a1 - 3; a += step) {
+                Fx f = new Fx();
+                f.type = 2;
+                if (ax) { f.x0 = f.x1 = mid; f.z0 = f.z1 = a; } else { f.z0 = f.z1 = mid; f.x0 = f.x1 = a; }
+                double q = r.nextDouble();
+                f.light = c.city ? (q < 0.9 ? L_ON : L_OFF) : (q < 0.25 ? L_STUB : q < 0.85 ? L_OFF : L_NONE);
+                f.r = 1 + r.nextInt(3);
+                if (f.light != L_NONE) out.add(f);
+            }
+        }
+        al.fx = out.toArray(new Fx[0]);
+    }
+
+    private static int[][] append(int[][] a, int[] e) {
+        int[][] n = java.util.Arrays.copyOf(a, a.length + 1);
+        n[a.length] = e;
+        return n;
+    }
+
+    private static Building sideBuilding(Lot lot, boolean ax, int g, int a) {
+        Landmarks.Piece pc = ax ? lot.find(g, a) : lot.find(a, g);
+        return pc instanceof Building ? (Building) pc : null;
+    }
+
+    private static int colTopAt(long seed, Building b, boolean ax, int g, int a) {
+        int x = ax ? g : a, z = ax ? a : g;
+        if (!b.cov(x, z, 0)) return b.base;
+        return colTop(seed, b, x, z);
+    }
+
+    private static final BlockState PIPE_A = Blocks.POLISHED_ANDESITE.defaultBlockState();
+    private static final BlockState PIPE_B = Blocks.GRAY_CONCRETE.defaultBlockState();
+    private static final BlockState PIPE_C = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
+    private static final BlockState PIPE_RUST = Blocks.RAW_IRON_BLOCK.defaultBlockState();
+    private static final BlockState FLANGE = Blocks.SMOOTH_STONE.defaultBlockState();
+    private static final BlockState BRIDGE = Blocks.SMOOTH_STONE.defaultBlockState();
+
+    static BlockState fxBlock(long seed, Fx f, int k, int x, int y, int z, int deckTop) {
+        switch (f.type) {
+            case 0: {
+                int along = f.axis == 0 ? x : z;
+                int lo = f.axis == 0 ? f.x0 : f.z0, hi = f.axis == 0 ? f.x1 : f.z1;
+                if (along < lo || along > hi) return null;
+                int dl = f.axis == 0 ? z - f.z0 : x - f.x0, dy = y - f.y;
+                int d2 = dl * dl + dy * dy;
+                boolean flange = f.r >= 1 && Math.floorMod(along, 7) == 3;
+                double rr = f.r * f.r + 0.8 * f.r, rf = (f.r + 1) * (f.r + 1) + 0.8 * (f.r + 1);
+                if (d2 <= rr) {
+                    if (k == 0 && CityLayout.hash01(seed, x * 7 + y, z, 7310) < 0.15) return PIPE_RUST;
+                    return f.mat == 0 ? PIPE_A : f.mat == 1 ? PIPE_B : PIPE_C;
+                }
+                if (flange && d2 <= rf) return FLANGE;
+                return null;
+            }
+            case 1: {
+                if (!f.covers(x, z)) return null;
+                if (y == f.y) {
+                    if (k == 0 && CityLayout.noise(seed, x, z, 3.0, 7311) > 0.75) return null;   // 1층: 깨진 다리
+                    return BRIDGE;
+                }
+                if (y == f.y + 1) {
+                    boolean edge = f.axis == 0 ? (z == f.z0 || z == f.z1) : (x == f.x0 || x == f.x1);
+                    return edge ? LAMP_CAP : null;
+                }
+                return null;
+            }
+            default: {
+                if (x != f.x0 || z != f.z0 || y <= deckTop) return null;
+                int rel = y - deckTop;
+                if (f.light == L_STUB) return rel <= f.r ? POLE : null;
+                if (rel <= POLE_H) return POLE;
+                if (rel == POLE_H + 1) return f.light == L_ON ? LAMP_ON : LAMP_OFF;
+                if (rel == POLE_H + 2) return LAMP_CAP;
+                return null;
+            }
+        }
+    }
+
+    /** (x, z)를 덮는 건물/석상/골목 조각. */
+    static Landmarks.Piece pieceAt(CityLayout.Params p, long seed, int k, int x, int z) {
         if ((k != 0 && !Landmarks.cityLayer(p, k)) || isFinalLayer(p, k)) return null;
         int[] u = warp(p, seed, k, x, z);
         int ix = cellX(seed, k, u[0]), jz = cellZ(seed, k, u[1]);
+        Landmarks.Piece pc = lot(p, seed, k, ix, jz).find(x, z);
+        if (pc != null) return pc;
         for (int a = -1; a <= 1; a++) {
             for (int b = -1; b <= 1; b++) {
-                for (Building bd : lot(p, seed, k, ix + a, jz + b).buildings) {
-                    if (bd.contains(x, z)) return bd;
-                }
+                if (a == 0 && b == 0) continue;
+                pc = lot(p, seed, k, ix + a, jz + b).find(x, z);
+                if (pc != null) return pc;
             }
         }
         return null;
     }
 
-    // ---------------- 2층: 아파트 단지와 석상 마당 ----------------
+    /** (x, z)를 덮는 건물(없으면 null). */
+    static Building buildingAt(CityLayout.Params p, long seed, int k, int x, int z) {
+        Landmarks.Piece pc = pieceAt(p, seed, k, x, z);
+        return pc instanceof Building ? (Building) pc : null;
+    }
+
+    // ---------------- 공통 ----------------
     /** 탑 광장에서 비켜 나도록 사각형을 잘라 냄. 못 쓰면 null. */
     private static int[] trimForPlazas(int sx0, int sz0, int sx1, int sz1, int minSize) {
         int[] gx = {CityLayout.towerCoord(sx0), CityLayout.towerCoord(sx1)};
@@ -440,210 +966,158 @@ final class DistrictLayout {
     }
 
     private static int ceilingFor(CityLayout.Params p, long seed, int k, int x0, int z0, int x1, int z1) {
-        if (k + 1 >= p.layers()) return Integer.MAX_VALUE;
+        if (k + 1 >= p.layers()) return CityLayout.MIN_Y + CityLayout.HEIGHT - 8;
         for (int a : new int[]{x0, (x0 + x1) / 2, x1}) for (int b : new int[]{z0, (z0 + z1) / 2, z1}) {
             if (CityLayout.insideRim(p, seed, k + 1, a, b)) return CityLayout.layerBottom(k + 1) - CEILING_MARGIN;
         }
-        return Integer.MAX_VALUE;
+        return CityLayout.MIN_Y + CityLayout.HEIGHT - 8;
     }
 
-    private static Lot buildCityLot(CityLayout.Params p, long seed, int k, int ix, int jz, Lot lot) {
-        int lx0 = lineX(seed, k, ix) + ROAD_HALF + 4, lx1 = lineX(seed, k, ix + 1) - ROAD_HALF - 4;
-        int lz0 = lineZ(seed, k, jz) + ROAD_HALF + 4, lz1 = lineZ(seed, k, jz + 1) - ROAD_HALF - 4;
-        if (lx1 - lx0 < 20 || lz1 - lz0 < 20) return lot;
-        if (Landmarks.overlapsSite(p, seed, k, lx0, lz0, lx1, lz1, 12)) return lot;   // 사원/기지 자리
-        double r = CityLayout.hash01(seed, ix, jz, 940 + k);
-        boolean statues = (lot.district == OPEN && r < 0.55) || (lot.district == SPARSE && r < 0.2);
-        if (statues) {
-            buildStatueYard(p, seed, k, ix, jz, lot, lx0, lz0, lx1, lz1);
-            return lot;
-        }
-        if (lot.district == OPEN) return lot;                    // 빈 광장
-        if (r >= (lot.district == DENSE ? 0.97 : 0.85) * p.buildingDensity()) return lot;
+    // ---------------- 2층 주거 건물 ----------------
+    private static final BlockState RAIL = Blocks.SMOOTH_STONE_SLAB.defaultBlockState();
 
-        // 아파트 단지: 긴 쪽을 따라 판상형 동이 줄지어 섬
-        boolean alongX = (lx1 - lx0) >= (lz1 - lz0);
-        int depth = 18 + CityLayout.rand(seed, ix, jz, 941, 5);
-        int gap = 12 + CityLayout.rand(seed, ix, jz, 942, 5);
-        int shortLen = alongX ? lz1 - lz0 : lx1 - lx0;
-        int rows = Math.max(1, (shortLen + gap) / (depth + gap));
-        if (lot.district == SPARSE) rows = Math.min(rows, 3);
-        int used = rows * depth + (rows - 1) * gap;
-        int off = (shortLen - used) / 2;
-        java.util.ArrayList<Building> list = new java.util.ArrayList<>();
-        for (int rI = 0; rI < rows; rI++) {
-            int s0 = (alongX ? lz0 : lx0) + off + rI * (depth + gap), s1 = s0 + depth - 1;
-            int a0 = alongX ? lx0 : lz0, a1 = alongX ? lx1 : lz1;
-            // 긴 동은 110칸 이하로 나눔
-            int segs = Math.max(1, (a1 - a0 + 12) / 122);
-            int segLen = (a1 - a0 + 1 - (segs - 1) * 12) / segs;
-            for (int sI = 0; sI < segs; sI++) {
-                int b0 = a0 + sI * (segLen + 12), b1 = b0 + segLen - 1;
-                int bx0 = alongX ? b0 : s0, bx1 = alongX ? b1 : s1, bz0 = alongX ? s0 : b0, bz1 = alongX ? s1 : b1;
-                int[] t = trimForPlazas(bx0, bz0, bx1, bz1, 14);
-                if (t == null) continue;
-                int maxTop = Integer.MIN_VALUE;
-                for (int a = 0; a <= 4; a++) for (int b = 0; b <= 4; b++) {
-                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, t[0] + (t[2] - t[0]) * a / 4, t[1] + (t[3] - t[1]) * b / 4);
-                    if (l != null) maxTop = Math.max(maxTop, l.maxY());
-                }
-                if (maxTop == Integer.MIN_VALUE) continue;
-                Building bd = new Building();
-                bd.style = APARTMENT;
-                bd.x0 = t[0]; bd.z0 = t[1]; bd.x1 = t[2]; bd.z1 = t[3];
-                bd.id = (int) (CityLayout.hash01(seed, ix * 31 + rI, jz * 17 + sI, 943) * Integer.MAX_VALUE);
-                bd.base = maxTop + 1;
-                bd.fh = 5;
-                bd.cs = 12;
-                bd.cw = 1;
-                bd.openSky = openSky(p, seed, k, (t[0] + t[2]) / 2, (t[1] + t[3]) / 2);
-                double hr = CityLayout.hash01(seed, bd.id, rI, 944);
-                int h = lot.district == DENSE ? 45 + (int) (55 * hr) : 20 + (int) (25 * hr);
-                h = Math.min(h, p.buildingMaxHeight());
-                h = Math.min(h, ceilingFor(p, seed, k, t[0], t[1], t[2], t[3]) - bd.base - 4);
-                bd.floors = h / bd.fh;
-                if (bd.floors < 3) continue;
-                bd.wallKeep = 0.97;
-                bd.dmg = 0.03 + 0.12 * CityLayout.hash01(seed, bd.id, 0, 945);
-                if (bd.openSky) bd.dmg += 0.15;
-                list.add(bd);
-            }
-        }
-        lot.buildings = list.toArray(new Building[0]);
-        return lot;
-    }
-
-    /** 석상 마당: 구획 안에 격자로 늘어선 기둥 석상(몇몇은 크고, 몇몇은 부러짐). */
-    private static void buildStatueYard(CityLayout.Params p, long seed, int k, int ix, int jz, Lot lot,
-                                        int lx0, int lz0, int lx1, int lz1) {
-        int sp = 13 + CityLayout.rand(seed, ix, jz, 950, 4);
-        int nx = Math.max(1, (lx1 - lx0 - 8) / sp + 1), nz = Math.max(1, (lz1 - lz0 - 8) / sp + 1);
-        lot.sp = sp; lot.nx = nx; lot.nz = nz;
-        lot.gx0 = lx0 + 4 + ((lx1 - lx0 - 8) - (nx - 1) * sp) / 2;
-        lot.gz0 = lz0 + 4 + ((lz1 - lz0 - 8) - (nz - 1) * sp) / 2;
-        lot.statues = new Landmarks.Statue[nx * nz];
-        boolean sparse = lot.district == SPARSE;
-        int faceAll = CityLayout.rand(seed, ix, jz, 951, 4);
-        for (int i = 0; i < nx; i++) {
-            for (int j = 0; j < nz; j++) {
-                double hr = CityLayout.hash01(seed, ix * 64 + i, jz * 64 + j, 952 + k);
-                if (hr < (sparse ? 0.55 : 0.18)) continue;                     // 빈자리
-                int cx = lot.gx0 + i * sp + CityLayout.rand(seed, ix * 64 + i, jz * 64 + j, 953, 3) - 1;
-                int cz = lot.gz0 + j * sp + CityLayout.rand(seed, ix * 64 + i, jz * 64 + j, 954, 3) - 1;
-                if (nearGrid(cx, cz, PLAZA_CLEAR)) continue;
-                CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, cx, cz);
-                if (l == null) continue;
-                boolean big = CityLayout.hash01(seed, cx, cz, 955) < 0.12;
-                int hw = big ? 2 : 1;
-                int h = big ? 20 + CityLayout.rand(seed, cx, cz, 956, 9) : 11 + CityLayout.rand(seed, cx, cz, 957, 8);
-                int ceil = ceilingFor(p, seed, k, cx, cz, cx, cz);
-                h = Math.min(h, ceil - l.maxY() - 4);
-                if (h < 6) continue;
-                int face = CityLayout.hash01(seed, cx, cz, 958) < 0.7 ? faceAll : CityLayout.rand(seed, cx, cz, 959, 4);
-                boolean broken = CityLayout.hash01(seed, cx, cz, 960) < (lot.district == OPEN ? 0.18 : 0.1);
-                lot.statues[i + j * nx] = new Landmarks.Statue(cx, cz, l.maxY() + 1, h, hw, face, broken);
-            }
-        }
-    }
-
-    static Landmarks.Statue statueAt(CityLayout.Params p, long seed, int k, int x, int z) {
-        int[] u = warp(p, seed, k, x, z);
-        int ix = cellX(seed, k, u[0]), jz = cellZ(seed, k, u[1]);
-        for (int a = -1; a <= 1; a++) {
-            for (int b = -1; b <= 1; b++) {
-                Landmarks.Statue st = lot(p, seed, k, ix + a, jz + b).statueNear(x, z);
-                if (st != null) return st;
-            }
+    /** 계단 디딤판: 계단실 안 (x, z)의 y에 놓일 블록(없으면 null). */
+    private static BlockState stairTread(Building b, int x, int y, int z, int c) {
+        double s = Math.atan2(z - b.stairZ, -(x - b.stairX)) / (2 * Math.PI);
+        if (s < 0) s += 1;
+        for (int n = 0; n < b.stairF; n++) {
+            double S = b.base + 1 + (n + s) * b.fh;
+            double q = Math.floor(S * 2) / 2;
+            int full = (int) Math.floor(q);
+            if (q - full < 0.25) { if (y == full - 1) return A_FRAME; }
+            else if (y == full) return STEP_SLAB;
         }
         return null;
     }
 
-    /** 아파트(2층): 외벽이 거의 온전하고 창이 규칙적으로 뚫려 있다. 유리는 대부분 남아 있고 드물게 불이 켜진 창이 있다. */
+    /** 2층 주거 건물: 외벽이 거의 온전하고, 창이 규칙적이고, 불 켜진 창과 들어간 발코니가 있다. 계단실로 옥상까지 오를 수 있다. */
     static BlockState apartmentBlock(long seed, Building b, int x, int y, int z, int deckTop) {
         if (y <= deckTop) return null;
-        if (y < b.base) return B_FOUND;
-        int lx = x - b.x0, lz = z - b.z0, w = b.w(), d = b.d();
-        // 지붕은 대체로 온전하고, 군데군데만 몇 층이 무너져 내림
-        int hgt = b.floors * b.fh;
-        double n = CityLayout.noise(seed, x, z, 18.0, 972 + (b.id & 255));
-        int top = b.nominalTop() - (int) Math.round(hgt * Math.min(1.0, b.dmg * 6) * Math.max(0, n - 0.6) * 2.5);
-        boolean perim = lx == 0 || lz == 0 || lx == w - 1 || lz == d - 1;
-        if (y == b.nominalTop() + 1 && perim && top >= b.nominalTop()) return A_FRAME;   // 옥상 난간
-        if (y > top) return null;
+        if (y < b.base) return b.cov(x, z, 0) ? B_FOUND : null;
         int rel = y - b.base, f = rel / b.fh, ry = rel % b.fh;
+        int sc = b.stairC(x, z);
+        if (sc <= 3 && f < b.stairF + (ry == 0 ? 1 : 0) && b.cov(x, z, Math.min(f, b.stairF - 1))) {
+            if (sc <= 1) return f < b.stairF ? A_FRAME : null;          // 가운데 기둥
+            if (f == 0 && ry == 0) return B_SLAB;
+            return stairTread(b, x, y, z, sc);
+        }
+        int tf = b.topF(x, z);
+        if (tf == 0) return null;
+        // 지붕은 대체로 온전하고, 군데군데만 몇 층이 무너져 내림(계단실 둘레는 온전)
+        int top = colTop(seed, b, x, z);
+        boolean cf = b.cov(x, z, f), cb = f > 0 && b.cov(x, z, f - 1);
+        if (!cf && cb && ry == 1 && b.missing(x, z, f - 1) != 0 && y <= top + 1) return A_FRAME;   // 옥상 난간
+        if (y > top) return null;
         if (ry == 0) {
-            if (f > 0 && CityLayout.noise(seed, x + f * 131, z, 9.0, 970) > 0.9 - 0.3 * b.dmg) return null;
+            if (!cf && !cb) return null;
+            if (f > 0 && sc > 5 && CityLayout.noise(seed, x + f * 131, z, 9.0, 970) > 0.92 - 0.3 * b.dmg) return null;
             return B_SLAB;
         }
-        boolean longX = w >= d;
-        int along = longX ? lx : lz, alongLen = longX ? w : d;
-        if (Math.floorMod(along, b.cs) == 0 && !(perim)) {
-            // 세대 사이 벽(문 구멍 있음)
-            int across = longX ? lz : lx, acrossLen = longX ? d : w;
-            if (Math.abs(across - acrossLen / 2) <= 1 && ry <= 3) return null;
-            return A_WALL;
-        }
-        if (!perim) return null;
-        boolean corner = (lx == 0 || lx == w - 1) && (lz == 0 || lz == d - 1);
-        if (corner) return A_FRAME;
-        int pos = (lx == 0 || lx == w - 1) ? lz : lx;
-        if (Math.floorMod(pos, 4) == 0) return A_FRAME;                     // 창틀 기둥
-        if (ry >= 2 && ry <= 3 && Math.floorMod(pos, 4) != 0) {
-            if (f == 0 && Math.floorMod(pos, 24) >= 9 && Math.floorMod(pos, 24) <= 14 && (lx == 0 || lx == w - 1) == !longX) {
-                return null;                                                  // 1층 출입구(긴 면)
+        if (!cf) return null;
+        if (b.door(x, y, z)) return null;
+        int miss = b.missing(x, z, f);
+        int dir = -1;
+        boolean loggiaInner = false;
+        if (miss != 0) {
+            dir = (miss & 1) != 0 ? 0 : (miss & 2) != 0 ? 1 : (miss & 4) != 0 ? 2 : 3;
+        } else if (f >= 1 && b.balconySides != 0) {
+            // 들어간 발코니의 안쪽 벽: 바로 바깥 칸이 발코니 쪽 외벽이면 여기가 실제 벽
+            int[][] dd = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+            for (int s = 0; s < 4 && dir < 0; s++) {
+                if ((b.balconySides & (1 << s)) == 0) continue;
+                int nx = x + dd[s][0], nz = z + dd[s][1];
+                if (b.cov(nx, nz, f) && !b.cov(nx + dd[s][0], nz + dd[s][1], f) && b.missing(nx, nz, f) == (1 << s)) {
+                    int along = s <= 1 ? z : x;
+                    if (Math.floorMod(along, 8) != 0) { dir = s; loggiaInner = true; }
+                }
             }
-            double r = CityLayout.hash01(seed, x * 3 + f, z, 971);
-            if (r < 0.02) return WINDOW_LIT;
-            if (r < 0.3 + 0.4 * b.dmg) return null;                           // 깨진 창
-            return WINDOW;
+            if (dir < 0) return null;
+        } else {
+            return null;                                                  // 내부는 비어 있음
         }
-        if (f == 0 && ry >= 1 && ry <= 3 && Math.floorMod(pos, 24) >= 9 && Math.floorMod(pos, 24) <= 14 && (lx == 0 || lx == w - 1) == !longX) {
-            return null;
+        boolean corner = Integer.bitCount(miss) >= 2 && (miss & 3) != 0 && (miss & 12) != 0;
+        if (corner) return A_FRAME;
+        int along = dir <= 1 ? z : x;
+        // 들어간 발코니(바깥 벽 칸): 난간만 있고 위는 트임
+        if (!loggiaInner && f >= 1 && (b.balconySides & (1 << dir)) != 0 && Integer.bitCount(miss) == 1) {
+            if (Math.floorMod(along, 8) == 0) return A_FRAME;
+            return ry == 1 ? RAIL : null;
+        }
+        if (Math.floorMod(along, 4) == 0) return A_FRAME;                 // 창틀 기둥
+        boolean entrance = f == 0 && Math.floorMod(along, 24) >= 9 && Math.floorMod(along, 24) <= 13
+                && CityLayout.hash01(seed, b.id + dir, Math.floorDiv(along, 24), 973) < 0.7;
+        if (entrance && ry <= 3) return null;                             // 1층 출입구
+        if (f == 0 && ry == 4 && Math.floorMod(along, 12) == 2) return LAMP_ON;   // 벽등
+        if (ry >= 2 && ry <= 3) {
+            double r = CityLayout.hash01(seed, x * 3 + f, z, 971);
+            if (r < 0.07) return WINDOW_LIT;
+            if (r < 0.12 + 0.4 * b.dmg) return null;                      // 깨진 창
+            return WINDOW;
         }
         return A_WALL;
     }
 
     /** 무너진 정도를 반영한 이 컬럼의 건물 꼭대기. */
     static int colTop(long seed, Building b, int x, int z) {
-        int hgt = b.floors * b.fh;
-        double cell = Math.max(12.0, Math.min(b.w(), b.d()) * 0.6);
+        int nominal = b.base + b.topF(x, z) * b.fh;
+        if (b.style == APARTMENT) {
+            if (b.stairC(x, z) <= 4) return nominal;
+            int hgt = nominal - b.base;
+            double n = CityLayout.noise(seed, x, z, 18.0, 972 + (b.id & 255));
+            return nominal - (int) Math.round(hgt * Math.min(1.0, b.dmg * 6) * Math.max(0, n - 0.6) * 2.5);
+        }
+        int hgt = nominal - b.base;
+        double cell = Math.max(12.0, Math.min(b.x1 - b.x0, b.z1 - b.z0) * 0.6);
         double n = CityLayout.noise(seed, x, z, cell, 860 + (b.id & 1023));
         double jag = CityLayout.noise(seed, x, z, 4.0, 861) - 0.5;
         double c = hgt * b.dmg * (0.25 + 1.3 * n) + jag * 3.0;
-        int top = b.nominalTop() - (int) Math.max(0, Math.round(c));
-        return Math.max(b.base + 1, Math.min(b.nominalTop(), top));
+        int top = nominal - (int) Math.max(0, Math.round(c));
+        return Math.max(b.base + 1, Math.min(nominal, top));
     }
 
-    private static boolean isColLine(int l, int len, int cs, int cw) {
-        return Math.floorMod(l, cs) < cw || l >= len - cw;
+    private static boolean gridCol(Building b, int x, int z) {
+        return Math.floorMod(x - b.x0, b.cs) < b.cw && Math.floorMod(z - b.z0, b.cs) < b.cw;
     }
 
-    /** 건물 블록. null이면 건물이 아무것도 두지 않음(공기 또는 판). deckTop 이하는 다루지 않는다. */
+    /** 1층 폐허 건물: 콘크리트 골조(기둥, 바닥판), 벗겨진 외벽, 무너진 꼭대기. */
     static BlockState buildingBlock(long seed, Building b, int x, int y, int z, int deckTop) {
         if (y <= deckTop) return null;
-        if (y < b.base) return B_FOUND;                         // 기초: 판 윗면에서 바닥판까지 채움
-        int lx = x - b.x0, lz = z - b.z0, w = b.w(), d = b.d();
-        boolean isCol = isColLine(lx, w, b.cs, b.cw) && isColLine(lz, d, b.cs, b.cw);
+        if (y < b.base) return b.cov(x, z, 0) ? B_FOUND : null;
+        int tf = b.topF(x, z);
+        if (tf == 0) return null;
+        int rel = y - b.base, f = rel / b.fh, ry = rel % b.fh;
         int top = colTop(seed, b, x, z);
+        int nominal = b.base + tf * b.fh;
+        boolean grid = gridCol(b, x, z);
         if (y > top) {
-            if (isCol && top < b.nominalTop() - b.fh && y <= top + 1 + CityLayout.rand(seed, x >> 1, z >> 1, 862, 4)
-                    && CityLayout.hash01(seed, x >> 1, z >> 1, 863) < 0.2) return B_REBAR;    // 크게 무너진 자리의 부러진 기둥에서 솟은 철근
+            if (grid && top < nominal - b.fh && b.cov(x, z, Math.max(0, (top - b.base) / b.fh))
+                    && y <= top + 1 + CityLayout.rand(seed, x >> 1, z >> 1, 862, 4)
+                    && CityLayout.hash01(seed, x >> 1, z >> 1, 863) < 0.07) return B_REBAR;   // 부러진 기둥에서 솟은 철근
             return null;
         }
-        int rel = y - b.base, f = rel / b.fh, ry = rel % b.fh;
+        boolean cf = b.cov(x, z, f), cb = f > 0 && b.cov(x, z, f - 1);
         if (ry == 0) {
+            if (!cf && !cb) return null;
             if (f > 0 && CityLayout.noise(seed, x + f * 131, z, 9.0, 864) > 0.66 + 0.25 * (1 - b.dmg)) return null;   // 무너진 바닥
             return B_SLAB;
         }
-        if (isCol) return B_COLUMN;
-        boolean west = lx == 0, east = lx == w - 1, north = lz == 0, south = lz == d - 1;
-        if (!(west || east || north || south)) return null;      // 내부는 비어 있음
-        int side = west ? 0 : east ? 1 : north ? 2 : 3;
-        if (CityLayout.hash01(seed, b.id + side * 7919, f, 865) >= b.wallKeep) return null;   // 벗겨진 외벽
-        int along = (side <= 1) ? lz : lx;
+        if (!cf) return null;
+        if (grid) return B_COLUMN;
+        int miss = b.missing(x, z, f);
+        if (miss == 0) return null;                                       // 내부는 비어 있음
+        boolean corner = (miss & 3) != 0 && (miss & 12) != 0;
+        if (corner) return B_COLUMN;
+        int dir = (miss & 1) != 0 ? 0 : (miss & 2) != 0 ? 1 : (miss & 4) != 0 ? 2 : 3;
+        int along = dir <= 1 ? z - b.z0 : x - b.x0;
         int bay = Math.floorMod(along, b.cs);
-        if (f == 0 && ry >= 1 && CityLayout.hash01(seed, b.id + side, along / b.cs, 866) < 0.35) return null;   // 입구
-        if (ry >= 2 && ry <= b.fh - 2 && bay >= b.cw + 1 && bay <= b.cs - 2 && along < (side <= 1 ? b.d() : b.w()) - b.cw - 1) return null;   // 창(기둥 양옆에 벽 한 칸씩)
+        if (bay < b.cw) return B_COLUMN;
+        if (b.door(x, y, z)) return null;
+        if (CityLayout.hash01(seed, b.id + dir * 7919 + (along / b.cs) * 31, f, 865) >= b.wallKeep) return null;   // 벗겨진 외벽
+        if (f == 0 && ry >= 1 && CityLayout.hash01(seed, b.id + dir, along / b.cs, 866) < 0.35) return null;   // 입구
+        if (f == 0 && ry == 4 && bay == b.cw + 1 && CityLayout.hash01(seed, b.id + dir * 3, along / b.cs, 868) < 0.6) {
+            return CityLayout.hash01(seed, x, z, 869) < 0.3 ? null : LAMP_OFF;   // 꺼진 벽등
+        }
+        if (ry >= 2 && ry <= b.fh - 2 && bay >= b.cw + 1 && bay <= b.cs - 2) return null;   // 창
         return CityLayout.hash01(seed, x * 31 + y, z, 867) < 0.12 ? B_WALL_WORN : B_WALL;
     }
 
@@ -734,9 +1208,32 @@ final class DistrictLayout {
             int lj = (dza <= dzb) ? jz : jz + 1;                // 가까운 가로 도로
             boolean ns = dx <= ROAD_HALF && nsRoad(p, seed, k, li, jz);
             boolean ew = dz <= ROAD_HALF && ewRoad(p, seed, k, ix, lj);
+            boolean exit = k == 0 && StartComplex.exitZone(p, seed, x, z, 3);
             Landmarks.Site site = Landmarks.siteAt(p, seed, k, x, z);
-            dc.st = site != null ? site : buildingAt(p, seed, k, x, z);
-            if (dc.st == null && Landmarks.cityLayer(p, k)) dc.st = statueAt(p, seed, k, x, z);
+            Lot here = lot(p, seed, k, ix, jz);
+            if (site != null) dc.st = site;
+            else if (!exit) {
+                Landmarks.Piece pc = pieceAt(p, seed, k, x, z);
+                if (pc instanceof Alley && plaza) {
+                    // 탑 광장 안에는 골목 설치물을 두지 않음
+                } else if (pc instanceof Alley) {
+                    Alley al = (Alley) pc;
+                    int cnt = 0, mx = 0;
+                    for (Fx f : al.fx) if (f.covers(x, z)) cnt++;
+                    if (cnt > 0) {
+                        Fx[] fs = new Fx[cnt];
+                        int i = 0;
+                        for (Fx f : al.fx) if (f.covers(x, z)) {
+                            fs[i++] = f;
+                            mx = Math.max(mx, f.type == 2 ? layer.top() + POLE_H + 2 : f.top());
+                        }
+                        dc.st = new AlleyCol(fs, k, mx);
+                    }
+                } else {
+                    dc.st = pc;
+                }
+            }
+            if (exit) ns = ew = false;
 
             if (dc.st != null) {
                 any = true;                                     // 구조물이 도로보다 우선(휘어진 도로 가장자리, 기지/사원 안)
@@ -764,19 +1261,17 @@ final class DistrictLayout {
                 }
             } else {
                 // 구획 안: 건물 둘레에 무너져 내린 돌무더기
-                if (!plaza && k == 0) {
-                    for (int a = -1; a <= 1; a++) for (int bb = -1; bb <= 1; bb++) for (Building b : lot(p, seed, k, ix + a, jz + bb).buildings) {
-                        double e = rectDist(b.x0, b.z0, b.x1, b.z1, x + 0.5, z + 0.5);
-                        if (e < 6 && b.dmg > 0.3) {
-                            int h = (int) Math.round(3 * (1 - e / 6) * (CityLayout.noise(seed, x, z, 3.0, 892) - 0.25) * 1.6);
-                            if (h > dc.pile) { dc.pile = h; any = true; }
-                        }
+                if (!plaza && k == 0 && !exit) {
+                    double e = here.nearBuilding(x, z, 6, 0.3);
+                    if (e < 6) {
+                        int h = (int) Math.round(3 * (1 - e / 6) * (CityLayout.noise(seed, x, z, 3.0, 892) - 0.25) * 1.6);
+                        if (h > dc.pile) { dc.pile = h; any = true; }
                     }
                 }
             }
 
             // 윗면만 파인 자국과 돌무더기(광장, 건물 안, 잔해 비탈 제외)
-            if (!plaza && !onTalus && dc.st == null && dc.light == L_NONE) {
+            if (!plaza && !onTalus && !exit && dc.st == null && dc.light == L_NONE) {
                 int cr = crater(p, seed, k, x, z);
                 if (cr > 0) {
                     int lim = layer.top() - (layer.bottom() + CityLayout.MIN_THICK - 1);
@@ -824,23 +1319,23 @@ final class DistrictLayout {
         int along = onNs ? z : x;
         int lineIdx = onNs ? li : lj;
         int off = CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 895 + k, LIGHT_STEP);
-        int slot = Math.floorDiv(along - off, LIGHT_STEP);
-        if (Math.floorMod(along - off, LIGHT_STEP) != 0) return L_NONE;
+        boolean first = onNs ? westOfLine : northOfLine;
+        if (first && Math.floorMod(along - off, LIGHT_STEP) != 0) return L_NONE;
         if ((onNs ? dz : dx) <= ROAD_HALF + 3) return L_NONE;                  // 교차로 근처 제외
-        boolean wantFirst = Math.floorMod(slot, 2) == 0;
-        boolean isFirst = onNs ? westOfLine : northOfLine;
-        if (wantFirst != isFirst) return L_NONE;                                // 양쪽 번갈아
+        if (!(onNs ? westOfLine : northOfLine)) {
+            if (Math.floorMod(along - off - LIGHT_STEP / 2, LIGHT_STEP) != 0) return L_NONE;   // 반대편은 반 칸 어긋나게
+        }
         double r = CityLayout.hash01(seed, x, z, 896 + k);
         if (k == 0) {
-            if (r < 0.2) return L_NONE;
-            return r < 0.42 ? L_STUB : L_OFF;
+            if (r < 0.15) return L_NONE;
+            return r < 0.35 ? L_STUB : L_OFF;
         }
-        if (r < 0.08) return L_NONE;
-        return r < 0.9 ? L_ON : L_OFF;
+        if (r < 0.04) return L_NONE;
+        return r < 0.92 ? L_ON : L_OFF;
     }
 
     private static int structTopSolid(long seed, Landmarks.Struct st, int x, int z, int deckTop) {
-        for (int y = st.maxY(); y > deckTop; y--) {
+        for (int y = st.topHint(x, z); y > deckTop; y--) {
             if (st.block(seed, x, y, z, deckTop) != null) return y;
         }
         return deckTop;
@@ -850,7 +1345,8 @@ final class DistrictLayout {
     private static boolean structSnowBlocked(long seed, Landmarks.Struct st, int x, int y, int z, int deckTop) {
         if (y <= deckTop) return false;
         BlockState b = st.block(seed, x, y, z, deckTop);
-        return b == null || b == STEP_SLAB || b == WINDOW || b == WINDOW_LIT || b == RUNWAY_LIGHT;
+        return b == null || b == STEP_SLAB || b == WINDOW || b == WINDOW_LIT || b == RUNWAY_LIGHT || b == LAMP_CAP || b == RAIL
+                || b == Landmarks.PLANE_BODY || b == Landmarks.PLANE_WING || b == Landmarks.GLASS || b == LAMP_ON || b == LAMP_OFF || Landmarks.noSnow(b);
     }
 
     // ---------------- 블록 ----------------

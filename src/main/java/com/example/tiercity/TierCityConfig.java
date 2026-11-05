@@ -26,6 +26,7 @@ public final class TierCityConfig {
     private static final ForgeConfigSpec.IntValue HOLE_MAX;
     private static final ForgeConfigSpec.DoubleValue BUILDING_DENSITY;
     private static final ForgeConfigSpec.IntValue BUILDING_MAX_HEIGHT;
+    private static final ForgeConfigSpec.BooleanValue START_IN_PIPE_HALL;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -69,10 +70,20 @@ public final class TierCityConfig {
                 .defineInRange("buildingDensity", 1.0D, 0.0D, 2.0D);
         BUILDING_MAX_HEIGHT = b.comment("Maximum height of ruined buildings in blocks (they also always stay below the layer above).")
                 .defineInRange("buildingMaxHeight", 160, 10, 400);
+        START_IN_PIPE_HALL = b.comment("Start new players (and players without a bed) in the pipe hall hanging under the lowest layer near spawnX/spawnZ. A spiral stair leads up to the city.")
+                .define("startInPipeHall", true);
         SPEC = b.build();
     }
 
     private TierCityConfig() {}
+
+    public static boolean startInPipeHall() {
+        try {
+            return START_IN_PIPE_HALL.get();
+        } catch (IllegalStateException e) {
+            return true;
+        }
+    }
 
     public static CityLayout.Params params() {
         try {

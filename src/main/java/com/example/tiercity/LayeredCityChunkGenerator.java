@@ -52,6 +52,8 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
         if (CityLayout.skyPanel == null) {
             CityLayout.skyPanel = TierCityMod.SKY_PANEL.get().defaultBlockState();
         }
+        if (Landmarks.statueFace == null) TierCityMod.injectStatueBlocks();
+        StartComplex.enabled = TierCityConfig.startInPipeHall();
         return CompletableFuture.supplyAsync(() -> {
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             int minX = chunk.getPos().getMinBlockX();
@@ -105,6 +107,15 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                             if (!s.isAir()) {
                                 chunk.setBlockState(pos.set(wx, y, wz), s, false);
                             }
+                        }
+                    }
+                    if (col.hall() != null) {
+                        // 시작 배관 공간과 계단실: 맨 마지막에 덮어쓴다(계단실 자리는 판과 장식을 비움)
+                        StartComplex.Hall hall = col.hall();
+                        int topY = Math.min(CityLayout.MIN_Y + CityLayout.HEIGHT - 1, StartComplex.maxY(hall));
+                        for (int y = StartComplex.minY(); y <= topY; y++) {
+                            BlockState s = StartComplex.block(seed, hall, wx, y, wz);
+                            if (s != null) chunk.setBlockState(pos.set(wx, y, wz), s, false);
                         }
                     }
                 }

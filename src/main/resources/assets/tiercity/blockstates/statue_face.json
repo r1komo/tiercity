@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "tiercity:block/statue_face"
+    },
+    "facing=east": {
+      "model": "tiercity:block/statue_face",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "tiercity:block/statue_face",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "tiercity:block/statue_face",
+      "y": 270
+    }
+  }
+}

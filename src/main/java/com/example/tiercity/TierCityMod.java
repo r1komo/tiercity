@@ -1,10 +1,13 @@
 package com.example.tiercity;
 
 import com.mojang.serialization.Codec;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -32,6 +35,40 @@ public class TierCityMod {
                     .mapColor(MapColor.COLOR_LIGHT_BLUE)
                     .strength(1.5F, 6.0F)
                     .sound(SoundType.STONE)));
+
+    /** 하얀 석상 몸통(점무늬 돌). */
+    public static final RegistryObject<Block> STATUE_STONE = BLOCKS.register("statue_stone", () -> new Block(statueProps()));
+    /** 1x1 석상의 얼굴(둥근 머리, 두 눈과 작은 입). */
+    public static final RegistryObject<Block> STATUE_FACE = BLOCKS.register("statue_face", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    /** 2x2 석상: 윗줄 왼눈/오른눈(둥근 머리 바깥쪽), 아랫줄 입 왼쪽/오른쪽 절반, 뒷줄 둥근 머리. */
+    public static final RegistryObject<Block> STATUE_EYE_LEFT = BLOCKS.register("statue_eye_left", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    public static final RegistryObject<Block> STATUE_EYE_RIGHT = BLOCKS.register("statue_eye_right", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    public static final RegistryObject<Block> STATUE_MOUTH_LEFT = BLOCKS.register("statue_mouth_left", () -> new StatueFaceBlock(statueProps()));
+    public static final RegistryObject<Block> STATUE_MOUTH_RIGHT = BLOCKS.register("statue_mouth_right", () -> new StatueFaceBlock(statueProps()));
+    public static final RegistryObject<Block> STATUE_HEAD = BLOCKS.register("statue_head", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+
+    private static BlockBehaviour.Properties statueProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.QUARTZ).strength(1.5F, 6.0F).sound(SoundType.CALCITE);
+    }
+
+    /** 석상 블록 상태를 생성 코드(Landmarks)에 넣는다. 방향 번호: 0 남, 1 북, 2 동, 3 서. */
+    static synchronized void injectStatueBlocks() {
+        if (Landmarks.statueFace != null) return;
+        Direction[] dirs = {Direction.SOUTH, Direction.NORTH, Direction.EAST, Direction.WEST};
+        Landmarks.statueStone = STATUE_STONE.get().defaultBlockState();
+        Landmarks.statueEyeL = faced(STATUE_EYE_LEFT.get(), dirs);
+        Landmarks.statueEyeR = faced(STATUE_EYE_RIGHT.get(), dirs);
+        Landmarks.statueMouthL = faced(STATUE_MOUTH_LEFT.get(), dirs);
+        Landmarks.statueMouthR = faced(STATUE_MOUTH_RIGHT.get(), dirs);
+        Landmarks.statueHead = faced(STATUE_HEAD.get(), dirs);
+        Landmarks.statueFace = faced(STATUE_FACE.get(), dirs);
+    }
+
+    private static BlockState[] faced(Block b, Direction[] dirs) {
+        BlockState[] out = new BlockState[4];
+        for (int i = 0; i < 4; i++) out[i] = b.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, dirs[i]);
+        return out;
+    }
 
     static {
         CHUNK_GENERATORS.register("layered_city", () -> LayeredCityChunkGenerator.CODEC);

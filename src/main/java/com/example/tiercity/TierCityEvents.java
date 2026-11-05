@@ -8,7 +8,11 @@ import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.event.entity.living.LivingDropsEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -27,11 +31,55 @@ public final class TierCityEvents {
 
         long seed = LayeredCityChunkGenerator.layoutSeed(level.getChunkSource().randomState());
         CityLayout.Params params = TierCityConfig.params();
+        StartComplex.enabled = TierCityConfig.startInPipeHall();
+        if (StartComplex.active(params)) {
+            int[] sp = StartComplex.spawnPos(params);
+            event.getSettings().setSpawn(new BlockPos(sp[0], sp[1], sp[2]), 90.0F);
+            event.setCanceled(true);
+            return;
+        }
         int[] d = CityLayout.nearestDeck(params, seed, params.spawnX(), params.spawnZ(), 2048, 0);
         if (d == null) return;
 
         event.getSettings().setSpawn(new BlockPos(d[0], d[2], d[1]), 90.0F);
         event.setCanceled(true);
+    }
+
+    private static final String STARTED = "tiercity_started";
+
+    /** 배관 공간 시작 지점으로 옮김(바닐라 스폰 보정은 지상으로 올려 버리므로 직접 옮긴다). */
+    private static boolean sendToHall(ServerPlayer player) {
+        if (!(player.level() instanceof ServerLevel level)) return false;
+        if (level.dimension() != Level.OVERWORLD) return false;
+        if (!(level.getChunkSource().getGenerator() instanceof LayeredCityChunkGenerator)) return false;
+        StartComplex.enabled = TierCityConfig.startInPipeHall();
+        CityLayout.Params params = TierCityConfig.params();
+        if (!StartComplex.active(params)) return false;
+        int[] sp = StartComplex.spawnPos(params);
+        player.teleportTo(level, sp[0] + 0.5, sp[1], sp[2] + 0.5, -90.0F, 0.0F);
+        return true;
+    }
+
+    /** 처음 들어온 플레이어는 배관 공간에서 시작. */
+    @SubscribeEvent
+    public static void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        CompoundTag root = player.getPersistentData();
+        CompoundTag data = root.getCompound(Player.PERSISTED_NBT_TAG);   // 죽어도 유지되는 영역
+        if (data.getBoolean(STARTED)) return;
+        if (sendToHall(player)) {
+            data.putBoolean(STARTED, true);
+            root.put(Player.PERSISTED_NBT_TAG, data);
+        }
+    }
+
+    /** 침대 없이 되살아나면 다시 배관 공간에서. */
+    @SubscribeEvent
+    public static void onRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.isEndConquered()) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (player.getRespawnPosition() != null) return;
+        sendToHall(player);
     }
 
     /** 허공으로 떨어져 죽으면 아이템을 가장 가까운 남아 있는 판(위층 우선) 위로 옮긴다. */

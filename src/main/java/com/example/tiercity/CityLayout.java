@@ -113,7 +113,7 @@ public final class CityLayout {
      * rodY[k] >= 0 이면 k층의 떨어져 나간 자리로 뻗은 철근(그 높이와 위 한 칸, 2칸 굵기).
      */
     public record Column(Layer[] layers, int pillarTop, int rebarTop, Pillar pillar, int pillarYtop, int[] rodY, Tower tower,
-                         DistrictLayout.Decor[] decor) {
+                         DistrictLayout.Decor[] decor, StartComplex.Hall hall) {
         public boolean hasDeck() {
             for (Layer l : layers) if (l != null) return true;
             return false;
@@ -124,7 +124,7 @@ public final class CityLayout {
         }
         public boolean hasPillar() { return pillar != null; }
         public boolean hasTower() { return tower != null; }
-        public boolean isEmpty() { return pillar == null && tower == null && !hasDeck() && !hasRod(); }
+        public boolean isEmpty() { return pillar == null && tower == null && hall == null && !hasDeck() && !hasRod(); }
         public int topSolid() {
             int t = -1;
             for (Layer l : layers) if (l != null) t = Math.max(t, l.maxY());
@@ -132,6 +132,7 @@ public final class CityLayout {
             if (pillar != null) t = Math.max(t, Math.max(pillarTop, rebarTop));
             if (tower != null) t = Math.max(t, tower.wallTop);
             for (DistrictLayout.Decor d : decor) if (d != null) t = Math.max(t, d.maxY);
+            if (hall != null) t = Math.max(t, StartComplex.CEIL);
             return t;
         }
     }
@@ -769,7 +770,7 @@ public final class CityLayout {
         long r2 = (long) wx * wx + (long) wz * wz;
         long R0 = p.radius();
         long lim0 = R0 + PILLAR_MAX_R + TILT_MARGIN + PILLAR_SPACING + 4L * RIM_STEP;
-        if (r2 > lim0 * lim0) return new Column(layers, -1, -1, null, 0, rodY, null, new DistrictLayout.Decor[n]);
+        if (r2 > lim0 * lim0) return new Column(layers, -1, -1, null, 0, rodY, null, new DistrictLayout.Decor[n], null);
 
         Hit h = locate(seed, p.fragmentSize(), wx, wz);
         LayerInfo[] infos = new LayerInfo[n];
@@ -844,7 +845,8 @@ public final class CityLayout {
                 }
             }
         }
-        return new Column(layers, pillarTop, rebarTop, pil, pYtop, rodY, tw, decor);
+        StartComplex.Hall hall = (tw == null && pil == null && StartComplex.touches(p, wx, wz)) ? StartComplex.hall(p, seed) : null;
+        return new Column(layers, pillarTop, rebarTop, pil, pYtop, rodY, tw, decor, hall);
     }
 
     /** 판 위 장식을 뺀 k층 판(건물 터 고르기용). */
@@ -951,6 +953,10 @@ public final class CityLayout {
     /** 모든 것을 합친 블록(기둥 우선). 생성기는 층별/기둥별로 따로 채우고, 이 함수는 조회용. */
     public static BlockState block(long seed, Column c, int x, int y, int z) {
         if (y < MIN_Y || y >= MIN_Y + HEIGHT) return AIR;
+        if (c.hall() != null) {
+            BlockState hs = StartComplex.block(seed, c.hall(), x, y, z);
+            if (hs != null) return hs;
+        }
         if (c.tower() != null) {
             BlockState ts = towerBlock(seed, c.tower(), x, y, z);
             if (ts != null) return ts;

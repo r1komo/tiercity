@@ -21,11 +21,13 @@ final class Landmarks {
 
         /** 이 구조물이 차지할 수 있는 가장 높은 y. */
         int maxY();
+
+        /** (x, z) 컬럼에서 이 구조물의 맨 위 블록을 찾기 시작할 y(맨 위 블록 이상). */
+        default int topHint(int x, int z) { return maxY(); }
     }
 
     // ---------------- 블록 ----------------
     private static final BlockState STONE = Blocks.STONE.defaultBlockState();
-    private static final BlockState STONE_ALT = Blocks.ANDESITE.defaultBlockState();
     private static final BlockState BRICK = Blocks.STONE_BRICKS.defaultBlockState();
     private static final BlockState BRICK_CRACK = Blocks.CRACKED_STONE_BRICKS.defaultBlockState();
     private static final BlockState TOP = Blocks.POLISHED_ANDESITE.defaultBlockState();
@@ -34,69 +36,114 @@ final class Landmarks {
     private static final BlockState JOINT = Blocks.POLISHED_ANDESITE.defaultBlockState();
     private static final BlockState RUNWAY = Blocks.GRAY_CONCRETE.defaultBlockState();
     private static final BlockState MARK = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
-    private static final BlockState RUNWAY_LIGHT = Blocks.PEARLESCENT_FROGLIGHT.defaultBlockState();
+    static final BlockState RUNWAY_LIGHT = Blocks.PEARLESCENT_FROGLIGHT.defaultBlockState();
     private static final BlockState HANGAR = Blocks.LIGHT_GRAY_CONCRETE.defaultBlockState();
     private static final BlockState HANGAR_FRAME = Blocks.POLISHED_ANDESITE.defaultBlockState();
-    private static final BlockState GLASS = Blocks.GLASS.defaultBlockState();
-    private static final BlockState METAL = Blocks.IRON_BLOCK.defaultBlockState();
+    static final BlockState GLASS = Blocks.GLASS.defaultBlockState();
+    static final BlockState PLANE_BODY = Blocks.GRAY_CONCRETE.defaultBlockState();
+    static final BlockState PLANE_WING = Blocks.POLISHED_DEEPSLATE.defaultBlockState();
+    private static final BlockState PLANE_DARK = Blocks.BLACK_CONCRETE.defaultBlockState();
+    private static final BlockState PLINTH = Blocks.SMOOTH_STONE.defaultBlockState();
+    private static final BlockState EYE_DARK = Blocks.BLACK_CONCRETE.defaultBlockState();
+    private static final BlockState WATER = Blocks.WATER.defaultBlockState();
+    private static final BlockState KOI_A = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
+    private static final BlockState KOI_B = Blocks.WHITE_TERRACOTTA.defaultBlockState();
+    private static final BlockState KOI_C = Blocks.RED_TERRACOTTA.defaultBlockState();
+    private static final BlockState METAL_PLANT = Blocks.IRON_BARS.defaultBlockState();
+    private static final BlockState POND_LIGHT = Blocks.SEA_LANTERN.defaultBlockState();
+    private static final BlockState FLOOR_LIGHT = Blocks.SEA_LANTERN.defaultBlockState();
+    private static final BlockState SCONCE = Blocks.OCHRE_FROGLIGHT.defaultBlockState();
+    private static final BlockState POST = Blocks.ANDESITE_WALL.defaultBlockState();
+    private static final BlockState POST_LAMP = Blocks.PEARLESCENT_FROGLIGHT.defaultBlockState();
+    private static final BlockState POST_CAP = Blocks.SMOOTH_STONE_SLAB.defaultBlockState();
+
+    /** 판 위에 놓이는 사각형 구조물(건물, 석상, 골목). 겹치지 않게 배치된다. */
+    abstract static class Piece implements Struct {
+        int x0, z0, x1, z1;
+
+        boolean contains(int x, int z) { return x >= x0 && x <= x1 && z >= z0 && z <= z1; }
+    }
+
+    // ---------------- 석상 블록(모드 블록, 생성기가 넣어 줌; 비어 있으면 시험용 대체 블록) ----------------
+    /** 방향 번호: 0 +z(남), 1 -z(북), 2 +x(동), 3 -x(서). 얼굴이 바라보는 쪽. */
+    static volatile BlockState statueStone = null;
+    static volatile BlockState[] statueFace = null, statueEyeL = null, statueEyeR = null,
+            statueMouthL = null, statueMouthR = null, statueHead = null;
+
+    private static BlockState sStone() {
+        BlockState s = statueStone;
+        return s != null ? s : Blocks.CALCITE.defaultBlockState();
+    }
+
+    private static BlockState pick(BlockState[] arr, int dir, BlockState fallback) {
+        return arr != null ? arr[dir] : fallback;
+    }
+
+    /** 눈을 얹지 않는 석상 블록(둥근 머리 위의 눈은 어색함). */
+    static boolean noSnow(BlockState b) {
+        for (BlockState[] arr : new BlockState[][]{statueFace, statueEyeL, statueEyeR, statueHead}) {
+            if (arr == null) continue;
+            for (BlockState s : arr) if (s == b) return true;
+        }
+        return false;
+    }
+
+    static int dirX(int dir) { return dir == 2 ? 1 : dir == 3 ? -1 : 0; }
+    static int dirZ(int dir) { return dir == 0 ? 1 : dir == 1 ? -1 : 0; }
+
+    static int dirOf(int vx, int vz) {
+        if (vz > 0) return 0;
+        if (vz < 0) return 1;
+        return vx > 0 ? 2 : 3;
+    }
 
     // ---------------- 석상 ----------------
-    /** 위쪽에 눈과 입이 뚫린 기둥 모양 석상. hw는 기둥 반폭(1이면 3x3). face: 0 +z, 1 -z, 2 +x, 3 -x. */
-    static final class Statue implements Struct {
-        final int cx, cz, base, h, hw, face;
+    /**
+     * 가늘고 긴 하얀 기둥 석상(둥근 머리, 위쪽에 작은 검은 눈).
+     * size 1: 1x1 기둥, 맨 위가 얼굴 블록 하나. size 2: 2x2 기둥, 맨 위 줄 앞면이 왼눈/오른눈, 그 아래 줄 앞면이 입 왼쪽/오른쪽.
+     * (sx, sz)가 기둥 북서쪽 칸, base는 받침 높이(받침 한 칸 위부터 기둥). face는 얼굴 방향.
+     */
+    static final class Statue extends Piece {
+        final int sx, sz, base, h, size, face;
         final boolean broken;
 
-        Statue(int cx, int cz, int base, int h, int hw, int face, boolean broken) {
-            this.cx = cx; this.cz = cz; this.base = base; this.h = h; this.hw = hw; this.face = face; this.broken = broken;
-        }
-
-        int ped() { return hw + 1; }
-
-        boolean contains(int x, int z) {
-            return Math.abs(x - cx) <= ped() && Math.abs(z - cz) <= ped();
+        Statue(int sx, int sz, int base, int h, int size, int face, boolean broken) {
+            this.sx = sx; this.sz = sz; this.base = base; this.h = h; this.size = size; this.face = face; this.broken = broken;
+            x0 = sx - 1; z0 = sz - 1; x1 = sx + size; z1 = sz + size;
         }
 
         @Override
-        public int maxY() { return base + 2 + h; }
+        public int maxY() { return base + h; }
 
         @Override
         public BlockState block(long seed, int x, int y, int z, int deckTop) {
-            int dx = x - cx, dz = z - cz, ped = ped();
-            if (Math.abs(dx) > ped || Math.abs(dz) > ped || y <= deckTop) return null;
-            if (y < base + 2) return BRICK;                          // 받침(기초 포함)
-            if (Math.abs(dx) > hw || Math.abs(dz) > hw) return null;
-            int cr = y - base - 2;
-            int top = h - 1;
+            if (!contains(x, z) || y <= deckTop) return null;
+            if (y <= base) return PLINTH;                                   // 받침(기초 포함)
+            int ox = x - sx, oz = z - sz;
+            if (ox < 0 || oz < 0 || ox >= size || oz >= size) return null;
+            int cr = y - base - 1;                                          // 0..h-1
             if (broken) {
-                top = (int) (h * 0.35) + CityLayout.rand(seed, cx, cz, 901, Math.max(1, h / 3)) + CityLayout.rand(seed, x, z, 902, 2);
+                int top = (int) (h * 0.4) + CityLayout.rand(seed, sx, sz, 901, Math.max(1, h / 3)) + CityLayout.rand(seed, x, z, 902, 2);
+                return cr <= Math.min(top, h - 3) ? sStone() : null;
             }
-            if (cr > top) return null;
-            if (!broken) {
-                if (cr == h - 1 && Math.abs(dx) == hw && Math.abs(dz) == hw) return null;   // 둥근 머리
-                int lat, depth;
-                switch (face) {
-                    case 0: lat = dx; depth = hw - dz; break;
-                    case 1: lat = -dx; depth = hw + dz; break;
-                    case 2: lat = -dz; depth = hw - dx; break;
-                    default: lat = dz; depth = hw + dx; break;
-                }
-                if (faceHole(lat, depth, cr, h, hw)) return null;
+            if (cr >= h) return null;
+            if (size == 1) {
+                return cr == h - 1 ? pick(statueFace, face, Blocks.WHITE_CONCRETE.defaultBlockState()) : sStone();
             }
-            return CityLayout.hash01(seed, x * 7 + y, z, 903) < 0.1 ? STONE_ALT : STONE;
+            int fx = dirX(face), fz = dirZ(face);
+            int lx = -fz, lz = fx;                                          // 바라보는 사람 기준 왼쪽
+            boolean front = fx != 0 ? (fx > 0 ? ox == 1 : ox == 0) : (fz > 0 ? oz == 1 : oz == 0);
+            boolean left = lx != 0 ? (lx > 0 ? ox == 1 : ox == 0) : (lz > 0 ? oz == 1 : oz == 0);
+            if (cr == h - 1) {
+                if (!front) return pick(statueHead, face, sStone());
+                return left ? pick(statueEyeL, face, EYE_DARK) : pick(statueEyeR, face, EYE_DARK);
+            }
+            if (cr == h - 2 && front) {
+                return left ? pick(statueMouthL, face, Blocks.WHITE_CONCRETE.defaultBlockState())
+                        : pick(statueMouthR, face, Blocks.WHITE_CONCRETE.defaultBlockState());
+            }
+            return sStone();
         }
-    }
-
-    /** 석상 얼굴의 구멍(눈 둘, 입 하나). lat: 얼굴 가로 위치, depth: 얼굴 면에서 안쪽으로 몇 칸, cr: 기둥 아래에서 몇 번째 줄. */
-    static boolean faceHole(int lat, int depth, int cr, int h, int hw) {
-        int s = Math.max(1, hw / 2);
-        if (depth >= s) return false;
-        int c = Math.max(1, (hw + 1) / 2);
-        int ew = s / 2;
-        int eyeTop = h - 1 - s, eyeBot = eyeTop - s + 1;
-        if (cr >= eyeBot && cr <= eyeTop && Math.abs(Math.abs(lat) - c) <= ew) return true;
-        int mouthTop = eyeBot - 1 - s, mouthBot = mouthTop - Math.max(0, s - 1);
-        int mw = ew + (hw >= 2 ? 1 : 0);
-        return cr >= mouthBot && cr <= mouthTop && Math.abs(lat) <= mw;
     }
 
     // ---------------- 사원, 공군 기지 ----------------
@@ -238,17 +285,47 @@ final class Landmarks {
     }
 
     // ---------------- 사원 ----------------
+    /** 지역 방향(0 v+, 1 v-, 2 u+, 3 u-)을 월드 방향 번호로. */
+    private static int worldDir(int rot, int localDir) {
+        int vx, vz;
+        boolean alongV = localDir <= 1;
+        int sgn = (localDir == 0 || localDir == 2) ? 1 : -1;
+        if (alongV) {
+            switch (rot) { case 0: vx = 0; vz = 1; break; case 1: vx = 1; vz = 0; break; case 2: vx = 0; vz = -1; break; default: vx = -1; vz = 0; }
+        } else {
+            switch (rot) { case 0: vx = 1; vz = 0; break; case 1: vx = 0; vz = -1; break; case 2: vx = -1; vz = 0; break; default: vx = 0; vz = 1; }
+        }
+        return dirOf(vx * sgn, vz * sgn);
+    }
+
+    /** 지역 좌표 (su, sv)에 선 석상의 블록. */
+    private static BlockState localStatue(long seed, Site s, int su, int sv, int size, int h, int localDir, boolean broken,
+                                          int base, int x, int y, int z, int deckTop) {
+        int[] w = s.world(su, sv);
+        return new Statue(w[0], w[1], base, h, size, worldDir(s.rot, localDir), broken).block(seed, x, y, z, deckTop);
+    }
+
+    /** 가로등 기둥(받침 위 rel 1부터): 기둥 n칸, 등, 갓. */
+    private static BlockState post(int rel, int n) {
+        if (rel >= 1 && rel <= n) return POST;
+        if (rel == n + 1) return POST_LAMP;
+        if (rel == n + 2) return POST_CAP;
+        return null;
+    }
+
     /*
-     * 3단 기단 위에 열주(기둥 열)와 큰 전당, 그 안에 지붕을 뚫고 솟은 거대한 석상.
-     * 정면(v+)으로 기단을 오르는 넓은 계단(반 블록 단), 계단 양옆과 아래 기단 둘레에 작은 석상이 줄지어 선다.
+     * 3단 기단 위에 열주(기둥 열)와 큰 전당. 전당 안에는 하얀 신상(둥근 머리, 작은 검은 눈)과
+     * 그 앞으로 뻗은 참배로(양옆에 작은 석상과 바닥 등), 참배로 양쪽의 유리 호수(유리 아래 물, 가짜 잉어, 금속 수초, 수중등).
+     * 정면(v+)으로 기단을 오르는 넓은 계단 양옆에 작은 석상과 가로등이 번갈아 줄지어 선다.
      */
     private static BlockState temple(long seed, Site s, int u, int v, int x, int y, int z, int deckTop) {
         int b = s.base;
         int t1 = b + 3, t2 = b + 6, t3 = b + 9;
         int m = Math.max(Math.abs(u), Math.abs(v));
+        int au = Math.abs(u);
 
         // 정면 계단: 사원 터 바깥 땅 높이(v 112)에서 맨 위 기단(v 56)까지, |u| <= 8, 반 블록씩 오름
-        if (v >= 56 && v <= 112 && Math.abs(u) <= 8) {
+        if (v >= 56 && v <= 112 && au <= 8) {
             double hgt = s.frontY + (t3 - s.frontY) * (112 - v) / 56.0;
             double q = Math.floor(hgt * 2) / 2;
             int full = (int) Math.floor(q);
@@ -257,34 +334,57 @@ final class Landmarks {
             return null;
         }
 
+        // 유리 호수(맨 위 기단을 파서 만듦): 참배로 양쪽
+        if (au >= 8 && au <= 26 && v >= 2 && v <= 28 && y >= t3 - 2 && y <= t3) {
+            if (y == t3) return GLASS;
+            double hp = CityLayout.hash01(seed, x, z, 940);
+            if (hp < 0.025 && y == t3 - 2) return POND_LIGHT;
+            if (hp > 0.93) return METAL_PLANT;                                  // 금속 수초(두 칸)
+            BlockState koi = koi(seed, s, u, v, y - (t3 - 2));
+            return koi != null ? koi : WATER;
+        }
+
         // 기단
         int tierTop = m <= 56 ? t3 : m <= 76 ? t2 : m <= 96 ? t1 : Integer.MIN_VALUE;
         if (tierTop != Integer.MIN_VALUE && y <= tierTop) {
-            if (y == tierTop) return TOP;
+            if (y == tierTop) {
+                if (m <= 31 && au == 3 && v >= 4 && v <= 30 && Math.floorMod(v, 4) == 0) return FLOOR_LIGHT;   // 참배로 바닥 등
+                return TOP;
+            }
             return CityLayout.hash01(seed, x * 13 + y, z, 920) < 0.08 ? BRICK_CRACK : BRICK;
         }
 
-        // 계단 옆 석상(정면을 계단 쪽으로)
-        if (Math.abs(Math.abs(u) - 15) <= 2 && v >= 60 && v <= 108) {
-            int sv = 60 + Math.round((v - 60) / 12f) * 12;
-            if (Math.abs(v - sv) <= 2 && sv <= 108) {
-                int sx = (int) Math.signum(u) * 15;
-                int top = sv > 96 ? b - 1 : sv > 76 ? t1 : t2;
-                Statue st = new Statue(0, 0, top + 1, 14, 1, u > 0 ? 3 : 2, CityLayout.hash01(seed, s.id, sv * 3 + (u > 0 ? 1 : 0), 921) < 0.15);
-                BlockState bs = st.block(seed, u - sx, y, v - sv, Math.min(top, deckTop));
-                if (bs != null) return bs;
+        // 계단 양옆: 작은 석상(계단 쪽을 봄)과 가로등이 번갈아 섬
+        if (v >= 57 && v <= 111 && au >= 10 && au <= 12) {
+            int gTop = v > 96 ? deckTop : v > 76 ? t1 : t2;
+            int slot = Math.round((v - 60) / 3f);
+            int sv = 60 + slot * 3;
+            boolean nearEdge = Math.abs(sv - 76) <= 2 || Math.abs(sv - 96) <= 2 || sv > 109;
+            if (!nearEdge && Math.abs(v - sv) <= 1) {
+                int su = (int) Math.signum(u) * 11;
+                if (Math.floorMod(slot, 2) == 0) {
+                    int hh = 5 + CityLayout.rand(seed, s.id + sv, u > 0 ? 1 : 0, 921, 2);
+                    BlockState bs = localStatue(seed, s, su, sv, 1, hh, u > 0 ? 3 : 2, false, gTop + 1, x, y, z, Math.min(gTop, deckTop));
+                    if (bs != null) return bs;
+                } else if (u == su && v == sv && y > gTop) {
+                    BlockState ps = post(y - gTop, 3);
+                    if (ps != null) return ps;
+                }
             }
         }
-        // 아래 기단 둘레의 석상(바깥을 봄)
-        if (m >= 84 && m <= 88 && !(v > 0 && Math.abs(u) <= 24)) {
-            int along = Math.abs(v) >= Math.abs(u) ? u : v;
+
+        // 아래 기단 둘레의 2x2 석상(바깥을 봄)
+        if (m >= 84 && m <= 89 && !(v > 0 && au <= 24)) {
+            boolean sideV = Math.abs(v) >= au;
+            int along = sideV ? u : v;
             int sa = Math.round(along / 16f) * 16;
-            int side = Math.abs(v) >= Math.abs(u) ? (v > 0 ? 0 : 1) : (u > 0 ? 2 : 3);
-            int du = side <= 1 ? u - sa : u - (int) Math.signum(u) * 86;
-            int dv = side <= 1 ? v - (int) Math.signum(v) * 86 : v - sa;
-            if (Math.abs(du) <= 2 && Math.abs(dv) <= 2) {
-                Statue st = new Statue(0, 0, t1 + 1, 12, 1, side, CityLayout.hash01(seed, s.id + sa, side, 922) < 0.2);
-                BlockState bs = st.block(seed, du, y, dv, t1);
+            int side = sideV ? (v > 0 ? 0 : 1) : (u > 0 ? 2 : 3);
+            int su = sideV ? sa : (int) Math.signum(u) * 86;
+            int sv = sideV ? (int) Math.signum(v) * 86 : sa;
+            if (Math.abs(u - su) <= 2 && Math.abs(v - sv) <= 2) {
+                int hh = 9 + CityLayout.rand(seed, s.id + sa, side, 922, 3);
+                boolean broken = CityLayout.hash01(seed, s.id + sa, side, 923) < 0.15;
+                BlockState bs = localStatue(seed, s, su, sv, 2, hh, side, broken, t1, x, y, z, Math.min(t1, deckTop));
                 if (bs != null) return bs;
             }
         }
@@ -292,50 +392,103 @@ final class Landmarks {
         int rel = y - t3;
         if (m > 56 || rel <= 0) return null;
 
-        // 거대 석상(전당 가운데, 정면을 봄)
-        int gu = u, gv = v + 6, ghw = 5;
+        // 신상(전당 가운데, 정면을 봄): 둥근 기둥, 둥근 머리, 작은 검은 눈
+        int gu = u, gv = v + 6;
+        double R = 5.5;
         int gh = Math.max(24, Math.min(56, s.ceil - t3 - 4));
-        if (Math.abs(gu) <= ghw + 2 && Math.abs(gv) <= ghw + 2) {
-            if (rel <= 2) return BRICK;                                        // 받침
-            if (Math.abs(gu) <= ghw && Math.abs(gv) <= ghw) {
-                int cr = rel - 3;
-                if (cr < gh) {
-                    if (cr >= gh - 2 && Math.abs(gu) >= ghw - (cr - gh + 3) && Math.abs(gv) >= ghw - (cr - gh + 3)) return null;   // 둥근 머리
-                    if (faceHole(gu, ghw - gv, cr, gh, ghw)) return null;
-                    return CityLayout.hash01(seed, x * 7 + y, z, 923) < 0.1 ? STONE_ALT : STONE;
+        int d2 = gu * gu + gv * gv;
+        if (d2 <= 8 * 8) {
+            if (rel <= 2) return d2 <= 7.5 * 7.5 ? PLINTH : null;            // 받침
+            int cr = rel - 3;
+            if (cr < gh && d2 <= R * R) {
+                int domeStart = gh - 6;
+                if (cr > domeStart) {
+                    double t = (cr - domeStart) / 6.0;
+                    double rr = R * Math.sqrt(Math.max(0, 1 - t * t));
+                    if (d2 > rr * rr) return null;
                 }
+                // 눈: 앞면(v+) 맨 바깥 칸, 머리 바로 아래
+                if (Math.abs(gu) >= 2 && Math.abs(gu) <= 3 && cr >= domeStart - 4 && cr <= domeStart - 2) {
+                    int front = (int) Math.floor(Math.sqrt(R * R - gu * gu));
+                    if (gv == front) return EYE_DARK;
+                }
+                return sStone();
+            }
+            // 신상 옆 가로등 4개
+        }
+        if ((au == 10) && (v == 0 || v == -12)) {
+            BlockState ps = post(rel, 4);
+            if (ps != null) return ps;
+        }
+
+        // 참배로 양옆의 작은 석상(참배로 쪽을 봄)
+        if (au >= 5 && au <= 7 && v >= 5 && v <= 31) {
+            int sv = 6 + Math.round((v - 6) / 4f) * 4;
+            if (sv <= 30 && Math.abs(v - sv) <= 1) {
+                int su = (int) Math.signum(u) * 6;
+                int hh = 4 + CityLayout.rand(seed, s.id + sv, u > 0 ? 7 : 8, 924, 2);
+                BlockState bs = localStatue(seed, s, su, sv, 1, hh, u > 0 ? 3 : 2, false, t3, x, y, z, Math.min(t3, deckTop));
+                if (bs != null) return bs;
             }
         }
 
-        // 열주: 맨 위 기단 둘레(m 50~52), 14칸마다 3x3 기둥, 위에 들보
+        // 열주: 맨 위 기단 둘레(m 50~52), 14칸마다 3x3 기둥, 위에 들보. 기둥 사이에 석등.
         int hallH = 32, colH = 26;
-        if (m >= 49 && m <= 53) {
-            int along = Math.abs(v) >= Math.abs(u) ? u : v;
-            boolean frontGap = v > 0 && Math.abs(v) >= Math.abs(u) && Math.abs(u) <= 9;
-            boolean pillar = m >= 50 && m <= 52 && Math.floorMod(along + 1, 14) <= 2 && !frontGap;
-            if (pillar && rel <= colH) {
-                if (rel > colH - 6 && CityLayout.noise(seed, x, z, 9.0, 924) > 0.78) return null;   // 부러진 기둥 머리
-                return BRICK;
+        if (m >= 44 && m <= 53) {
+            boolean sideV = Math.abs(v) >= au;
+            int along = sideV ? u : v;
+            boolean frontGap = v > 0 && sideV && au <= 9;
+            if (m == 45 && Math.floorMod(along, 14) == 6 && !frontGap) {
+                BlockState ps = post(rel, 2);
+                if (ps != null) return ps;
             }
-            if ((rel == colH + 1 || rel == colH + 2) && CityLayout.noise(seed, x, z, 12.0, 925) < 0.7) return TOP;   // 들보(군데군데 무너짐)
-            return null;
+            if (m >= 49) {
+                boolean pillar = m >= 50 && m <= 52 && Math.floorMod(along + 1, 14) <= 2 && !frontGap;
+                if (pillar && rel <= colH) {
+                    if (rel > colH - 6 && CityLayout.noise(seed, x, z, 9.0, 924) > 0.78) return null;   // 부러진 기둥 머리
+                    return BRICK;
+                }
+                if ((rel == colH + 1 || rel == colH + 2) && CityLayout.noise(seed, x, z, 12.0, 925) < 0.7) return TOP;   // 들보(군데군데 무너짐)
+                return null;
+            }
         }
 
-        // 전당: 벽(m 32~33), 정문, 높은 창, 지붕(군데군데 무너짐, 석상 자리는 뚫림)
+        // 전당: 벽(m 32~33), 정문, 높은 창, 벽등, 지붕(군데군데 무너짐, 신상 자리는 뚫림)
         if (m >= 32 && m <= 33 && rel <= hallH) {
-            boolean frontWall = v > 0 && Math.abs(v) >= Math.abs(u);
-            if (frontWall && Math.abs(u) <= 7 && rel <= 16) return null;                 // 정문
-            int along = Math.abs(v) >= Math.abs(u) ? u : v;
+            boolean sideV = Math.abs(v) >= au;
+            boolean frontWall = v > 0 && sideV;
+            if (frontWall && au <= 7 && rel <= 16) return null;                       // 정문
+            int along = sideV ? u : v;
             if (rel >= 18 && rel <= 27 && Math.floorMod(along, 10) == 5) return null;    // 높은 창
+            if (m == 32 && rel == 10 && Math.floorMod(along, 10) == 0) return SCONCE;    // 벽등
             if (rel > hallH - 8 && CityLayout.noise(seed, x, z, 14.0, 926) > 0.72) return null;
             return CityLayout.hash01(seed, x * 11 + y, z, 927) < 0.08 ? BRICK_CRACK : BRICK;
         }
         if (m < 32 && rel == hallH + 1) {
-            if (Math.abs(gu) <= ghw + 2 && Math.abs(gv) <= ghw + 2) return null;
+            if (d2 <= 8 * 8) return null;
             if (CityLayout.noise(seed, x, z, 16.0, 928) > 0.62) return null;
             return BRICK;
         }
         return null;
+    }
+
+    /** 유리 아래 가짜 잉어: 4x4 칸마다 하나(없을 수도), 두세 칸 길이. ly: 0 바닥 쪽, 1 유리 바로 아래. */
+    private static BlockState koi(long seed, Site s, int u, int v, int ly) {
+        int ci = Math.floorDiv(u, 4), cj = Math.floorDiv(v, 4);
+        int key = s.id * 31 + ci;
+        if (CityLayout.hash01(seed, key, cj, 941) >= 0.5) return null;
+        if (CityLayout.rand(seed, key, cj, 942, 2) != ly) return null;
+        int hu = ci * 4 + CityLayout.rand(seed, key, cj, 943, 3), hv = cj * 4 + CityLayout.rand(seed, key, cj, 944, 3);
+        boolean alongU = CityLayout.hash01(seed, key, cj, 945) < 0.5;
+        int len = 2 + CityLayout.rand(seed, key, cj, 946, 2);
+        int du = u - hu, dv = v - hv;
+        boolean in = alongU ? (dv == 0 && du >= 0 && du < len) : (du == 0 && dv >= 0 && dv < len);
+        if (!in) return null;
+        int c = CityLayout.rand(seed, key, cj, 947, 10);
+        int t = alongU ? du : dv;
+        if (c < 5) return KOI_A;
+        if (c < 8) return t == 0 ? KOI_C : KOI_B;                          // 붉은 머리 흰 잉어
+        return t == len - 1 ? KOI_B : KOI_A;
     }
 
     // ---------------- 공군 기지 ----------------
@@ -394,23 +547,49 @@ final class Landmarks {
             return null;
         }
 
-        // 부서진 비행기(활주로 옆 계류장)
-        BlockState pl = plane(seed, s, u + 40, v - 2, rel, 0);
+        // 부서진 비행기(계류장 둘, 활주로 위 하나)
+        BlockState pl = plane(u + 40, v - 2, rel, 0);
         if (pl != null) return pl;
-        pl = plane(seed, s, u - 140, v + 4, rel, 1);
+        pl = plane(u - 140, v + 4, rel, 1);
+        if (pl != null) return pl;
+        pl = plane(-(u + 120), v + 45, rel, 2);
         if (pl != null) return pl;
         return null;
     }
 
-    /** 단순한 비행기 잔해: 동체, 날개, 꼬리. variant 1은 한쪽 날개가 떨어져 나갔고 기수가 무너짐. */
-    private static BlockState plane(long seed, Site s, int du, int dv, int rel, int variant) {
-        if (Math.abs(du) > 16 || Math.abs(dv) > 14) return null;
-        boolean fuselage = Math.abs(dv) <= 1 && du >= -14 && du <= 14 && rel >= 1 && rel <= 3;
-        if (fuselage && variant == 1 && du > 9 && rel == 3) return null;
-        if (fuselage && Math.abs(dv) == 1 && rel == 3 && (du == -14 || du == 14)) return null;
-        boolean wing = du >= -2 && du <= 3 && Math.abs(dv) <= 13 && rel == 2;
-        if (wing && variant == 1 && dv > 5) return null;
-        boolean tail = du >= -14 && du <= -11 && ((dv == 0 && rel >= 4 && rel <= 7) || (Math.abs(dv) <= 4 && rel == 3));
-        return (fuselage || wing || tail) ? METAL : null;
+    /**
+     * 비행기 잔해(어두운 회색이라 눈 위에서도 잘 보임): 길이 37의 둥근 동체, 폭 45의 뒤로 젖힌 날개, 수직/수평 꼬리날개, 검은 조종석.
+     * variant 1: 한쪽 날개가 떨어져 나가고 기수가 땅에 처박힘. variant 2: 동체가 두 동강, 꼬리가 꺾임.
+     */
+    private static BlockState plane(int du, int dv, int rel, int variant) {
+        if (Math.abs(du) > 19 || Math.abs(dv) > 22 || rel < 1 || rel > 12) return null;
+        int adv = Math.abs(dv);
+        if (variant == 2 && du >= -2 && du <= 0) return null;                 // 두 동강
+        double cy = 3.0;
+        if (variant == 1 && du > 6) cy = Math.max(0.6, 3.0 - (du - 6) * 0.35);   // 처박힌 기수
+        if (variant == 2 && du < -2) cy = 3.0 - (-2 - du) * 0.12;
+        // 동체
+        if (du >= -18 && du <= 18) {
+            double r = du > 14 ? 2.2 - (du - 14) * 0.45 : 2.2;
+            double dy = rel - cy;
+            if (dv * dv + dy * dy <= r * r) {
+                if (du >= 11 && du <= 14 && dy >= 1 && adv <= 1) return PLANE_DARK;   // 조종석
+                return PLANE_BODY;
+            }
+        }
+        // 주날개(동체 중간 높이, 한 칸 두께)
+        int wy = (int) Math.round(cy);
+        if (rel == wy && adv >= 2 && adv <= 22) {
+            if (variant == 1 && dv > 7) return null;
+            double le = 5 - adv * 0.45, te = -5 - adv * 0.25;
+            if (du <= le && du >= te) return PLANE_WING;
+        }
+        // 꼬리
+        if (du >= -18 && du <= -13) {
+            int fin = 5 + (int) Math.round((du + 18) * -0.8 + 5);              // 뒤로 갈수록 높아짐
+            if (dv == 0 && rel > cy + 1 && rel <= cy + 1 + Math.max(1, fin - 4) + 0) return PLANE_WING;
+            if (rel == (int) Math.round(cy) + 1 && adv <= 7 && adv >= 2) return PLANE_WING;
+        }
+        return null;
     }
 }
