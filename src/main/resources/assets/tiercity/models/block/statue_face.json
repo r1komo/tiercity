@@ -134,6 +134,38 @@
           "texture": "#stone"
         }
       }
+    },
+    {
+      "from": [
+        2,
+        3,
+        -1
+      ],
+      "to": [
+        14,
+        10,
+        0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#face"
+        },
+        "south": {
+          "texture": "#stone"
+        },
+        "east": {
+          "texture": "#stone"
+        },
+        "west": {
+          "texture": "#stone"
+        },
+        "up": {
+          "texture": "#stone"
+        },
+        "down": {
+          "texture": "#stone"
+        }
+      }
     }
   ]
 }

@@ -33,7 +33,7 @@ public final class TierCityEvents {
         CityLayout.Params params = TierCityConfig.params();
         StartComplex.enabled = TierCityConfig.startInPipeHall();
         if (StartComplex.active(params)) {
-            int[] sp = StartComplex.spawnPos(params);
+            int[] sp = StartComplex.spawnPos(params, seed);
             event.getSettings().setSpawn(new BlockPos(sp[0], sp[1], sp[2]), 90.0F);
             event.setCanceled(true);
             return;
@@ -55,7 +55,8 @@ public final class TierCityEvents {
         StartComplex.enabled = TierCityConfig.startInPipeHall();
         CityLayout.Params params = TierCityConfig.params();
         if (!StartComplex.active(params)) return false;
-        int[] sp = StartComplex.spawnPos(params);
+        long seed = LayeredCityChunkGenerator.layoutSeed(level.getChunkSource().randomState());
+        int[] sp = StartComplex.spawnPos(params, seed);
         player.teleportTo(level, sp[0] + 0.5, sp[1], sp[2] + 0.5, -90.0F, 0.0F);
         return true;
     }

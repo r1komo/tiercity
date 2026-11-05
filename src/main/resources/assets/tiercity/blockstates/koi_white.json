@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "tiercity:block/koi_white"
+    },
+    "facing=east": {
+      "model": "tiercity:block/koi_white",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "tiercity:block/koi_white",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "tiercity:block/koi_white",
+      "y": 270
+    }
+  }
+}

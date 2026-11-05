@@ -13,5 +13,8 @@
   "block.tiercity.statue_eye_right": "Statue Right Eye",
   "block.tiercity.statue_mouth_left": "Statue Mouth (Left)",
   "block.tiercity.statue_mouth_right": "Statue Mouth (Right)",
-  "block.tiercity.statue_head": "Statue Head"
+  "block.tiercity.statue_head": "Statue Head",
+  "block.tiercity.koi_orange": "Fake Koi (Orange)",
+  "block.tiercity.koi_white": "Fake Koi (White)",
+  "block.tiercity.koi_kohaku": "Fake Koi (Kohaku)"
 }

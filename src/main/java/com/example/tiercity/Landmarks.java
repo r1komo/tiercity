@@ -46,10 +46,11 @@ final class Landmarks {
     private static final BlockState PLINTH = Blocks.SMOOTH_STONE.defaultBlockState();
     private static final BlockState EYE_DARK = Blocks.BLACK_CONCRETE.defaultBlockState();
     private static final BlockState WATER = Blocks.WATER.defaultBlockState();
-    private static final BlockState KOI_A = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
-    private static final BlockState KOI_B = Blocks.WHITE_TERRACOTTA.defaultBlockState();
-    private static final BlockState KOI_C = Blocks.RED_TERRACOTTA.defaultBlockState();
-    private static final BlockState METAL_PLANT = Blocks.IRON_BARS.defaultBlockState();
+    private static final BlockState KOI_FALLBACK = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
+    /** 가짜 잉어 블록(물에 잠긴 상태) [색 0 주황, 1 흰색, 2 홍백][방향]. 생성기가 넣어 줌. */
+    static volatile BlockState[][] koiStates = null;
+    /** 물에 잠긴 쇠창살(금속 수초). 생성기가 넣어 줌. */
+    static volatile BlockState metalPlant = null;
     private static final BlockState POND_LIGHT = Blocks.SEA_LANTERN.defaultBlockState();
     private static final BlockState FLOOR_LIGHT = Blocks.SEA_LANTERN.defaultBlockState();
     private static final BlockState SCONCE = Blocks.OCHRE_FROGLIGHT.defaultBlockState();
@@ -339,7 +340,10 @@ final class Landmarks {
             if (y == t3) return GLASS;
             double hp = CityLayout.hash01(seed, x, z, 940);
             if (hp < 0.025 && y == t3 - 2) return POND_LIGHT;
-            if (hp > 0.93) return METAL_PLANT;                                  // 금속 수초(두 칸)
+            if (hp > 0.95 && y == t3 - 2) {                                     // 금속 수초(바닥에서 한 칸)
+                BlockState mp = metalPlant;
+                return mp != null ? mp : Blocks.IRON_BARS.defaultBlockState();
+            }
             BlockState koi = koi(seed, s, u, v, y - (t3 - 2));
             return koi != null ? koi : WATER;
         }
@@ -472,23 +476,19 @@ final class Landmarks {
         return null;
     }
 
-    /** 유리 아래 가짜 잉어: 4x4 칸마다 하나(없을 수도), 두세 칸 길이. ly: 0 바닥 쪽, 1 유리 바로 아래. */
+    /** 유리 아래 가짜 잉어: 4x4 칸마다 한 마리(없을 수도), 잉어 모양 블록 하나. ly: 0 바닥 쪽, 1 유리 바로 아래. */
     private static BlockState koi(long seed, Site s, int u, int v, int ly) {
         int ci = Math.floorDiv(u, 4), cj = Math.floorDiv(v, 4);
         int key = s.id * 31 + ci;
-        if (CityLayout.hash01(seed, key, cj, 941) >= 0.5) return null;
+        if (CityLayout.hash01(seed, key, cj, 941) >= 0.45) return null;
         if (CityLayout.rand(seed, key, cj, 942, 2) != ly) return null;
-        int hu = ci * 4 + CityLayout.rand(seed, key, cj, 943, 3), hv = cj * 4 + CityLayout.rand(seed, key, cj, 944, 3);
-        boolean alongU = CityLayout.hash01(seed, key, cj, 945) < 0.5;
-        int len = 2 + CityLayout.rand(seed, key, cj, 946, 2);
-        int du = u - hu, dv = v - hv;
-        boolean in = alongU ? (dv == 0 && du >= 0 && du < len) : (du == 0 && dv >= 0 && dv < len);
-        if (!in) return null;
+        int hu = ci * 4 + CityLayout.rand(seed, key, cj, 943, 4), hv = cj * 4 + CityLayout.rand(seed, key, cj, 944, 4);
+        if (u != hu || v != hv) return null;
+        BlockState[][] k = koiStates;
+        if (k == null) return KOI_FALLBACK;
         int c = CityLayout.rand(seed, key, cj, 947, 10);
-        int t = alongU ? du : dv;
-        if (c < 5) return KOI_A;
-        if (c < 8) return t == 0 ? KOI_C : KOI_B;                          // 붉은 머리 흰 잉어
-        return t == len - 1 ? KOI_B : KOI_A;
+        int color = c < 5 ? 0 : c < 7 ? 1 : 2;
+        return k[color][CityLayout.rand(seed, key, cj, 945, 4)];
     }
 
     // ---------------- 공군 기지 ----------------
@@ -562,34 +562,37 @@ final class Landmarks {
      * variant 1: 한쪽 날개가 떨어져 나가고 기수가 땅에 처박힘. variant 2: 동체가 두 동강, 꼬리가 꺾임.
      */
     private static BlockState plane(int du, int dv, int rel, int variant) {
-        if (Math.abs(du) > 19 || Math.abs(dv) > 22 || rel < 1 || rel > 12) return null;
+        if (Math.abs(du) > 19 || Math.abs(dv) > 22 || rel < 1 || rel > 14) return null;
         int adv = Math.abs(dv);
         if (variant == 2 && du >= -2 && du <= 0) return null;                 // 두 동강
-        double cy = 3.0;
-        if (variant == 1 && du > 6) cy = Math.max(0.6, 3.0 - (du - 6) * 0.35);   // 처박힌 기수
-        if (variant == 2 && du < -2) cy = 3.0 - (-2 - du) * 0.12;
+        // 기울기: variant 1은 기수가 땅에 박히고(앞으로 숙임) 왼쪽 날개가 땅에 닿음(옆으로 기욺)
+        double pitch = 0, roll = 0, cy0 = 3.0;
+        if (variant == 1) { pitch = -0.19; roll = 0.2; cy0 = 3.6; }
+        double cy = cy0 + du * pitch;
+        if (variant == 2 && du < -2) { cy = 3.0 + (-2 - du) * 0.28; roll = -0.1; }   // 뒤쪽 동강이 들림
         // 동체
         if (du >= -18 && du <= 18) {
             double r = du > 14 ? 2.2 - (du - 14) * 0.45 : 2.2;
-            double dy = rel - cy;
+            double dy = rel - (cy + dv * roll);
             if (dv * dv + dy * dy <= r * r) {
                 if (du >= 11 && du <= 14 && dy >= 1 && adv <= 1) return PLANE_DARK;   // 조종석
                 return PLANE_BODY;
             }
         }
-        // 주날개(동체 중간 높이, 한 칸 두께)
-        int wy = (int) Math.round(cy);
-        if (rel == wy && adv >= 2 && adv <= 22) {
-            if (variant == 1 && dv > 7) return null;
+        // 주날개(한 칸 두께, 기울기를 따라 높이가 변함)
+        if (adv >= 2 && adv <= 22) {
+            if (variant == 1 && dv > 7) return null;                          // 떨어져 나간 날개
             double le = 5 - adv * 0.45, te = -5 - adv * 0.25;
-            if (du <= le && du >= te) return PLANE_WING;
+            if (du <= le && du >= te && rel == (int) Math.round(cy + dv * roll)) return PLANE_WING;
         }
         // 꼬리
         if (du >= -18 && du <= -13) {
             int fin = 5 + (int) Math.round((du + 18) * -0.8 + 5);              // 뒤로 갈수록 높아짐
-            if (dv == 0 && rel > cy + 1 && rel <= cy + 1 + Math.max(1, fin - 4) + 0) return PLANE_WING;
-            if (rel == (int) Math.round(cy) + 1 && adv <= 7 && adv >= 2) return PLANE_WING;
+            int base = (int) Math.round(cy);
+            if (dv == 0 && rel > base + 1 && rel <= base + 1 + Math.max(1, fin - 4)) return PLANE_WING;
+            if (rel == (int) Math.round(cy + 1 + dv * roll) && adv <= 7 && adv >= 2) return PLANE_WING;
         }
         return null;
     }
+
 }

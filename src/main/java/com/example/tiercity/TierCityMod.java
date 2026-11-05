@@ -3,7 +3,9 @@ package com.example.tiercity;
 import com.mojang.serialization.Codec;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -47,6 +49,15 @@ public class TierCityMod {
     public static final RegistryObject<Block> STATUE_MOUTH_RIGHT = BLOCKS.register("statue_mouth_right", () -> new StatueFaceBlock(statueProps()));
     public static final RegistryObject<Block> STATUE_HEAD = BLOCKS.register("statue_head", () -> new StatueFaceBlock(statueProps().noOcclusion()));
 
+    /** 가짜 잉어 3색(주황, 흰색, 홍백). */
+    public static final RegistryObject<Block> KOI_ORANGE = BLOCKS.register("koi_orange", () -> new KoiBlock(koiProps()));
+    public static final RegistryObject<Block> KOI_WHITE = BLOCKS.register("koi_white", () -> new KoiBlock(koiProps()));
+    public static final RegistryObject<Block> KOI_KOHAKU = BLOCKS.register("koi_kohaku", () -> new KoiBlock(koiProps()));
+
+    private static BlockBehaviour.Properties koiProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(0.5F).sound(SoundType.METAL).noOcclusion();
+    }
+
     private static BlockBehaviour.Properties statueProps() {
         return BlockBehaviour.Properties.of().mapColor(MapColor.QUARTZ).strength(1.5F, 6.0F).sound(SoundType.CALCITE);
     }
@@ -61,6 +72,14 @@ public class TierCityMod {
         Landmarks.statueMouthL = faced(STATUE_MOUTH_LEFT.get(), dirs);
         Landmarks.statueMouthR = faced(STATUE_MOUTH_RIGHT.get(), dirs);
         Landmarks.statueHead = faced(STATUE_HEAD.get(), dirs);
+        Block[] kois = {KOI_ORANGE.get(), KOI_WHITE.get(), KOI_KOHAKU.get()};
+        BlockState[][] ks = new BlockState[3][];
+        for (int c = 0; c < 3; c++) {
+            ks[c] = faced(kois[c], dirs);
+            for (int i = 0; i < 4; i++) ks[c][i] = ks[c][i].setValue(BlockStateProperties.WATERLOGGED, true);
+        }
+        Landmarks.koiStates = ks;
+        Landmarks.metalPlant = Blocks.IRON_BARS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true);
         Landmarks.statueFace = faced(STATUE_FACE.get(), dirs);
     }
 

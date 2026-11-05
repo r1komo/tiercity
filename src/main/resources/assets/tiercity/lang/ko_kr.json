@@ -13,5 +13,8 @@
   "block.tiercity.statue_eye_right": "석상 오른눈",
   "block.tiercity.statue_mouth_left": "석상 입(왼쪽)",
   "block.tiercity.statue_mouth_right": "석상 입(오른쪽)",
-  "block.tiercity.statue_head": "석상 머리"
+  "block.tiercity.statue_head": "석상 머리",
+  "block.tiercity.koi_orange": "가짜 잉어(주황)",
+  "block.tiercity.koi_white": "가짜 잉어(흰색)",
+  "block.tiercity.koi_kohaku": "가짜 잉어(홍백)"
 }

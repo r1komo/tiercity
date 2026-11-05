@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "tiercity:block/koi_kohaku"
+    },
+    "facing=east": {
+      "model": "tiercity:block/koi_kohaku",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "tiercity:block/koi_kohaku",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "tiercity:block/koi_kohaku",
+      "y": 270
+    }
+  }
+}
