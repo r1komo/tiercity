@@ -89,6 +89,9 @@ final class Landmarks {
         return false;
     }
 
+    /** 위에서 볼 때 시계 방향으로 한 번 돈 방향(북→동→남→서). */
+    static int cw(int dir) { return dir == 1 ? 2 : dir == 2 ? 0 : dir == 0 ? 3 : 1; }
+
     static int dirX(int dir) { return dir == 2 ? 1 : dir == 3 ? -1 : 0; }
     static int dirZ(int dir) { return dir == 0 ? 1 : dir == 1 ? -1 : 0; }
 
@@ -136,7 +139,8 @@ final class Landmarks {
             boolean front = fx != 0 ? (fx > 0 ? ox == 1 : ox == 0) : (fz > 0 ? oz == 1 : oz == 0);
             boolean left = lx != 0 ? (lx > 0 ? ox == 1 : ox == 0) : (lz > 0 ? oz == 1 : oz == 0);
             if (cr == h - 1) {
-                if (!front) return pick(statueHead, face, sStone());
+                // 뒷줄 둥근 머리: 머리 블록의 둥근 중심은 모델의 앞-안쪽 모서리. 오른쪽 뒤는 시계 방향으로 한 번 돌려 씀
+                if (!front) return pick(statueHead, left ? face : cw(face), sStone());
                 return left ? pick(statueEyeL, face, EYE_DARK) : pick(statueEyeR, face, EYE_DARK);
             }
             if (cr == h - 2 && front) {

@@ -265,61 +265,108 @@ final class StartComplex {
         }
         h.masses = masses.toArray(new Mass[0]);
 
-        // 얽힌 배관: 판에 매달리거나 다른 배관/덩어리에서 갈라져 나옴
+        // 얽힌 배관: 벽에서 벽으로 건너지르는 굵은 줄기 + 줄기/덩어리 사이를 ㄱ자로 잇는 배관. 수직 배관은 두지 않는다.
+        // 공간을 칸(40x40, 높이 30)으로 나눠 배관이 적은 칸부터 채워 밀도를 고르게 한다.
         ArrayList<Seg> segs = new ArrayList<>(paths);
         ArrayList<Seg> free = new ArrayList<>();
         int yLo = CEIL - DEPTH;
-        int tries = 0;
-        while (free.size() < 75 && tries++ < 4000) {
-            double q = rng.nextDouble();
-            double rad = q < 0.4 ? 1 : q < 0.75 ? 2 : q < 0.9 ? 3 : q < 0.97 ? 4 : 5;
-            double ax, ay, az;
-            double pick = rng.nextDouble();
-            if (free.isEmpty() || pick < 0.35) {
-                ax = h.cx + lo + rng.nextInt(hi - lo); az = h.cz + lo + rng.nextInt(hi - lo); ay = CEIL - rad + 1;
-            } else if (pick < 0.5 && !masses.isEmpty()) {
-                Mass m = masses.get(rng.nextInt(masses.size()));
-                ax = m.x0 + rng.nextInt(m.x1 - m.x0 + 1); az = m.z0 + rng.nextInt(m.z1 - m.z0 + 1); ay = m.bot + 2;
-            } else {
+        int[] dens = new int[6 * 6 * 4];
+        int edge = HALF - 3;                                       // 둘레 벽에 닿는 끝
+        int trunks = 0;
+        for (int tries = 0; tries < 200 && trunks < 11; tries++) {
+            double rad = 2 + rng.nextInt(3);
+            double y = yLo + 6 + rng.nextInt(DEPTH - 10);
+            double pos = -100 + rng.nextInt(200);
+            boolean alongX = rng.nextBoolean();
+            double slope = (rng.nextDouble() - 0.5) * 0.12;
+            double drift = (rng.nextDouble() - 0.5) * 0.5;          // 살짝 비스듬히
+            double L = 2 * edge;
+            double ax = alongX ? h.cx - edge : h.cx + pos, az = alongX ? h.cz + pos : h.cz - edge;
+            double bx = alongX ? h.cx + edge : h.cx + pos + drift * L, bz = alongX ? h.cz + pos + drift * L : h.cz + edge;
+            if (Math.abs(bx - h.cx) > edge || Math.abs(bz - h.cz) > edge) continue;
+            double by = Math.max(yLo + 2, Math.min(CEIL - rad - 1, y + slope * L));
+            Seg sg = new Seg(ax, y, az, bx, by, bz, rad, pickMat(rng));
+            if (!segClear(h, sg) || denseAt(h, dens, sg) > 12) continue;
+            addDens(h, dens, sg);
+            free.add(sg); segs.add(sg); trunks++;
+        }
+        int conn = 0;
+        for (int tries = 0; tries < 6000 && free.size() < 78; tries++) {
+            // 시작점: 후보 여러 개 중 배관이 가장 적은 칸
+            double[] best = null;
+            int bestD = Integer.MAX_VALUE;
+            for (int c = 0; c < 8; c++) {
+                double[] pnt;
+                if (!masses.isEmpty() && rng.nextDouble() < 0.2) {
+                    Mass m = masses.get(rng.nextInt(masses.size()));
+                    pnt = new double[]{m.x0 + rng.nextInt(m.x1 - m.x0 + 1), Math.max(m.bot + 1, CEIL - 4 - rng.nextInt(Math.max(1, CEIL - m.bot - 4))), m.z0 + rng.nextInt(m.z1 - m.z0 + 1)};
+                } else {
+                    Seg o = free.get(rng.nextInt(free.size()));
+                    double t = rng.nextDouble();
+                    pnt = new double[]{o.ax + (o.bx - o.ax) * t, o.ay + (o.by - o.ay) * t, o.az + (o.bz - o.az) * t};
+                }
+                int dd = dens[cell(h, pnt[0], pnt[1], pnt[2])];
+                if (dd < bestD) { bestD = dd; best = pnt; }
+            }
+            if (best == null) continue;
+            // 끝점: 가까운 다른 배관 위 한 점(없으면 둘레 벽)
+            double[] tgt = null;
+            for (int c = 0; c < 10 && tgt == null; c++) {
                 Seg o = free.get(rng.nextInt(free.size()));
                 double t = rng.nextDouble();
-                ax = o.ax + (o.bx - o.ax) * t; ay = o.ay + (o.by - o.ay) * t; az = o.az + (o.bz - o.az) * t;
+                double[] q = {o.ax + (o.bx - o.ax) * t, o.ay + (o.by - o.ay) * t, o.az + (o.bz - o.az) * t};
+                double hd = Math.abs(q[0] - best[0]) + Math.abs(q[2] - best[2]);
+                if (hd < 16 || hd > 90 || Math.abs(q[1] - best[1]) > 0.3 * hd) continue;
+                tgt = q;
             }
-            double kind = rng.nextDouble();
-            double yaw = rng.nextDouble() * Math.PI * 2;
-            double pitch;
-            if (kind < 0.3) pitch = -(1.25 + rng.nextDouble() * 0.32);
-            else if (kind < 0.8) pitch = (rng.nextDouble() - 0.5) * 0.4;
-            else pitch = (rng.nextDouble() - 0.6) * 1.6;
-            if (kind >= 0.3 && kind < 0.6) yaw = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2);
-            double L = 25 + rng.nextInt(110);
-            double bx = ax + Math.cos(yaw) * Math.cos(pitch) * L, bz = az + Math.sin(yaw) * Math.cos(pitch) * L;
-            double by = ay + Math.sin(pitch) * L;
-            double t = 1;
-            if (bx < h.cx + lo) t = Math.min(t, (h.cx + lo - ax) / (bx - ax));
-            if (bx > h.cx + hi) t = Math.min(t, (h.cx + hi - ax) / (bx - ax));
-            if (bz < h.cz + lo) t = Math.min(t, (h.cz + lo - az) / (bz - az));
-            if (bz > h.cz + hi) t = Math.min(t, (h.cz + hi - az) / (bz - az));
-            if (by < yLo) t = Math.min(t, (yLo - ay) / (by - ay));
-            if (by > CEIL - rad + 1) t = Math.min(t, (CEIL - rad + 1 - ay) / (by - ay));
-            if (t < 0.2) continue;
-            bx = ax + (bx - ax) * t; by = ay + (by - ay) * t; bz = az + (bz - az) * t;
-            Seg s = new Seg(ax, ay, az, bx, by, bz, rad, pickMat(rng));
-            if (by < CEIL - 20 && rng.nextDouble() < 0.5) s.broken = true;
-            if (!segClear(h, s)) continue;
-            free.add(s);
-            segs.add(s);
-        }
-        // 오르는 길을 받치는 줄기(아래로 늘어짐)
-        for (int i = 0; i < routeCount; i += 2) {
-            Seg b = paths.get(i);
-            double sx = b.ax + (b.bx - b.ax) * 0.5, sy = b.ay + (b.by - b.ay) * 0.5, sz = b.az + (b.bz - b.az) * 0.5;
-            Seg s = new Seg(sx, sy - 2, sz, sx + rng.nextInt(9) - 4, sy - 25 - rng.nextInt(35), sz + rng.nextInt(9) - 4, 1 + rng.nextInt(2), pickMat(rng));
-            s.broken = true;
-            segs.add(s);
+            if (tgt == null) {
+                boolean alongX = rng.nextBoolean();
+                double sign = rng.nextBoolean() ? 1 : -1;
+                tgt = alongX ? new double[]{h.cx + sign * edge, best[1] + (rng.nextDouble() - 0.5) * 10, best[2]}
+                        : new double[]{best[0], best[1] + (rng.nextDouble() - 0.5) * 10, h.cz + sign * edge};
+            }
+            double rad = rng.nextDouble() < 0.55 ? 1 : rng.nextDouble() < 0.8 ? 2 : 3;
+            int mat = pickMat(rng);
+            double hx = Math.abs(tgt[0] - best[0]), hz = Math.abs(tgt[2] - best[2]);
+            double ym = best[1] + (tgt[1] - best[1]) * hx / Math.max(1, hx + hz);
+            boolean xFirst = rng.nextBoolean();
+            double[] mid = xFirst ? new double[]{tgt[0], ym, best[2]} : new double[]{best[0], best[1] + (tgt[1] - best[1]) * hz / Math.max(1, hx + hz), tgt[2]};
+            Seg s1 = new Seg(best[0], best[1], best[2], mid[0], mid[1], mid[2], rad, mat);
+            Seg s2 = new Seg(mid[0], mid[1], mid[2], tgt[0], tgt[1], tgt[2], rad, mat);
+            boolean ok1 = s1.len < 2 || segClear(h, s1), ok2 = s2.len < 2 || segClear(h, s2);
+            if (!ok1 || !ok2) continue;
+            if (s1.len >= 2) { addDens(h, dens, s1); free.add(s1); segs.add(s1); }
+            if (s2.len >= 2) { addDens(h, dens, s2); free.add(s2); segs.add(s2); }
+            conn++;
         }
         h.segs = segs.toArray(new Seg[0]);
         return h;
+    }
+
+    /** 밀도 칸 번호(40x40, 높이 30). */
+    private static int cell(Hall h, double x, double y, double z) {
+        int i = Math.max(0, Math.min(5, (int) Math.floor((x - h.cx + HALF) / 40)));
+        int j = Math.max(0, Math.min(5, (int) Math.floor((z - h.cz + HALF) / 40)));
+        int k = Math.max(0, Math.min(3, (int) Math.floor((CEIL - y) / 30)));
+        return (k * 6 + j) * 6 + i;
+    }
+
+    private static void addDens(Hall h, int[] dens, Seg s) {
+        int n = Math.max(1, (int) (s.len / 6));
+        for (int i = 0; i <= n; i++) {
+            double t = i / (double) n;
+            dens[cell(h, s.ax + (s.bx - s.ax) * t, s.ay + (s.by - s.ay) * t, s.az + (s.bz - s.az) * t)] += (int) Math.ceil(s.r);
+        }
+    }
+
+    /** 이 배관이 지나는 칸들의 가장 큰 밀도(줄기끼리 몰리지 않게). */
+    private static int denseAt(Hall h, int[] dens, Seg s) {
+        int n = Math.max(1, (int) (s.len / 6)), m = 0;
+        for (int i = 0; i <= n; i++) {
+            double t = i / (double) n;
+            m = Math.max(m, dens[cell(h, s.ax + (s.bx - s.ax) * t, s.ay + (s.by - s.ay) * t, s.az + (s.bz - s.az) * t)]);
+        }
+        return m;
     }
 
     private static double hdist(double[] a, double[] b) {
