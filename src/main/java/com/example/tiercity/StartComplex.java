@@ -158,63 +158,13 @@ final class StartComplex {
         double r = ROUTE_R;
         double y0 = CEIL - 100;
         double yEnd = LANDING - 2.9;                              // 등 꼭대기가 발판 윗면과 같은 높이
-        double[] start = {h.cx - 60, y0, h.cz + 60};
         double[] end = {h.shx - 24, yEnd, h.shz};
-        // 오르는 길: 이리저리 꺾이며 일정한 기울기로 오름(가파르면 다시 고름)
-        ArrayList<double[]> pts = null;
-        for (int attempt = 0; attempt < 400 && pts == null; attempt++) {
-            int n = 2 + rng.nextInt(3);
-            ArrayList<double[]> cand = new ArrayList<>();
-            cand.add(start);
-            for (int i = 1; i <= n; i++) {
-                cand.add(new double[]{h.cx - 100 + rng.nextInt(200), 0, h.cz - 100 + rng.nextInt(200)});
-            }
-            cand.add(end);
-            double total = 0;
-            for (int i = 1; i < cand.size(); i++) total += hdist(cand.get(i - 1), cand.get(i));
-            double slope = (yEnd - y0) / total;
-            if (slope < 0.18 || slope > 0.55) continue;
-            double acc = 0;
-            boolean ok = true;
-            for (int i = 1; i < cand.size() - 1; i++) {
-                acc += hdist(cand.get(i - 1), cand.get(i));
-                cand.get(i)[1] = y0 + slope * acc;
-                double[] c = cand.get(i);
-                if (Math.max(Math.abs(c[0] - h.shx), Math.abs(c[2] - h.shz)) < 22) ok = false;   // 끝 전에는 계단실을 비켜 감
-                if (Math.hypot(c[0] - h.spx, c[2] - h.spz) < 20) ok = false;
-            }
-            // 꺾이는 각도가 너무 급하면(되돌아감) 다시
-            for (int i = 1; i < cand.size() - 1 && ok; i++) {
-                double[] a = cand.get(i - 1), b = cand.get(i), c = cand.get(i + 1);
-                double ux = b[0] - a[0], uz = b[2] - a[2], vx = c[0] - b[0], vz = c[2] - b[2];
-                double cos = (ux * vx + uz * vz) / (Math.hypot(ux, uz) * Math.hypot(vx, vz) + 1e-9);
-                if (cos < -0.3) ok = false;
-            }
-            if (ok) pts = cand;
-        }
-        if (pts == null) {   // 안전한 기본 길
-            pts = new ArrayList<>();
-            pts.add(start);
-            pts.add(new double[]{h.cx + 80, 0, h.cz + 60});
-            pts.add(new double[]{h.cx + 80, 0, h.cz - 80});
-            pts.add(new double[]{h.cx - 40, 0, h.cz - 80});
-            pts.add(end);
-            double total = 0;
-            for (int i = 1; i < pts.size(); i++) total += hdist(pts.get(i - 1), pts.get(i));
-            double acc = 0;
-            for (int i = 1; i < pts.size() - 1; i++) {
-                acc += hdist(pts.get(i - 1), pts.get(i));
-                pts.get(i)[1] = y0 + (yEnd - y0) * acc / total;
-            }
-        }
-        ArrayList<Seg> paths = new ArrayList<>();
-        int routeMat = pickMat(rng);
-        paths.add(walkSeg(h.cx - 96, y0, h.cz + 60, start[0], start[1], start[2], r, routeMat));   // 스폰 배관
-        for (int i = 1; i < pts.size(); i++) {
-            double[] a = pts.get(i - 1), b = pts.get(i);
-            paths.add(walkSeg(a[0], a[1], a[2], b[0], b[1], b[2], r, rng.nextDouble() < 0.6 ? routeMat : pickMat(rng)));
-        }
-        paths.add(walkSeg(end[0], end[1], end[2], h.shx - 6, yEnd, h.shz, r, routeMat));            // 발판 밑으로 들어감
+        // 오르는 길: 하나로 이어진 배관이 아니라, 여러 배관을 갈아타며 오른다.
+        // 각 배관은 옆 배관과 나란히 맞닿는 곳(등 높이가 같음)에서 갈아탈 수 있고, 갈아타는 곳을 지나서도 계속 뻗어 있다(막다른 길).
+        ArrayList<Seg> paths = null;
+        for (int attempt = 0; attempt < 1500 && paths == null; attempt++) paths = route(h, rng, y0, yEnd, end);
+        if (paths == null) paths = fallbackRoute(h, rng, y0, yEnd, end);
+        paths.add(walkSeg(end[0], end[1], end[2], h.shx - 6, yEnd, h.shz, r, paths.get(paths.size() - 1).mat));   // 발판 밑으로 들어감
         int routeCount = paths.size();
         // 곁가지: 길 중간에서 갈라져 나가는 탈 수 있는 배관(대부분 막다른 길)
         for (int i = 0; i < 6; i++) {
@@ -399,6 +349,110 @@ final class StartComplex {
         addDens(h, dens, s1); addDens(h, dens, s2);
         free.add(s1); free.add(s2); segs.add(s1); segs.add(s2);
         return true;
+    }
+
+    /** 갈아타는 길 하나를 만들어 본다. 조건이 안 맞으면 null. */
+    private static ArrayList<Seg> route(Hall h, SplittableRandom rng, double y0, double yEnd, double[] end) {
+        double gx = end[0], gz = end[2];
+        int lim = HALF - 16;
+        ArrayList<Seg> out = new ArrayList<>();
+        double yaw = Math.atan2(gz - h.spz, gx - h.spx) + (rng.nextDouble() - 0.5) * 2.0;
+        double r = ROUTE_R;
+        double ax = h.spx - Math.cos(yaw) * 12, az = h.spz - Math.sin(yaw) * 12, c = y0;
+        for (int i = 0; i < 12; i++) {
+            double yawGoal = Math.atan2(gz - az, gx - ax), dGoal = Math.hypot(gx - ax, gz - az);
+            double rise = yEnd - c;
+            // 마지막 배관: 목표(발판 앞)까지 곧장
+            if (i >= 3 && Math.abs(angDiff(yaw, yawGoal)) < 0.35 && dGoal > 20) {
+                double sl = rise / dGoal;
+                if (sl < -0.2 || sl > 0.5) return null;
+                Seg last = walkSeg(ax, c, az, gx, yEnd, gz, r, pickMat(rng));
+                if (!routeOk(h, out, last)) return null;
+                out.add(last);
+                return out;
+            }
+            double sl = Math.max(0.12, Math.min(0.5, rise / Math.max(60, dGoal * 1.2) + (rng.nextDouble() - 0.5) * 0.12));
+            double L = 25 + rng.nextInt(26);
+            double tx = ax + Math.cos(yaw) * L, tz = az + Math.sin(yaw) * L, tc = c + sl * L;
+            if (Math.abs(tx - h.cx) > lim || Math.abs(tz - h.cz) > lim) return null;
+            if (tc + r > CEIL - 7) return null;
+            if (Math.max(Math.abs(tx - h.shx), Math.abs(tz - h.shz)) < LANDING_R + 12) return null;
+            // 갈아타는 곳을 지나서도 더 뻗음(막다른 길)
+            double E = 6 + rng.nextInt(26);
+            double ex = tx + Math.cos(yaw) * E, ez = tz + Math.sin(yaw) * E;
+            double k = 1;
+            if (Math.abs(ex - h.cx) > lim + 10) k = Math.min(k, (lim + 10 - Math.abs(tx - h.cx)) / Math.abs(ex - tx + 1e-9));
+            if (Math.abs(ez - h.cz) > lim + 10) k = Math.min(k, (lim + 10 - Math.abs(tz - h.cz)) / Math.abs(ez - tz + 1e-9));
+            E *= Math.max(0, k);
+            Seg pipe = walkSeg(ax, c, az, tx + Math.cos(yaw) * E, tc + sl * E, tz + Math.sin(yaw) * E, r, pickMat(rng));
+            pipe.broken = rng.nextDouble() < 0.4;
+            if (!routeOk(h, out, pipe)) return null;
+            out.add(pipe);
+            // 다음 배관: 목표 쪽으로 35~80도 꺾임. 꺾이는 쪽 옆에 나란히 붙어서 시작
+            double turn = 0.6 + rng.nextDouble() * 0.8;
+            double g = angDiff(yaw, Math.atan2(gz - tz, gx - tx));
+            double side = g >= 0 ? 1 : -1;
+            double nyaw;
+            if (i >= 2 && Math.abs(g) >= 0.5 && Math.abs(g) <= 1.5) {
+                nyaw = yaw + g;                                                      // 목표를 바로 향함
+            } else {
+                if (rng.nextDouble() < 0.2) side = -side;
+                nyaw = yaw + side * turn;
+            }
+            double nr = rng.nextDouble() < 0.5 ? 2 : 3;
+            double nx = -Math.sin(yaw) * side, nz = Math.cos(yaw) * side;    // 꺾이는 쪽 옆
+            double off = r + nr - 1;
+            ax = tx + nx * off - Math.cos(nyaw) * 2; az = tz + nz * off - Math.sin(nyaw) * 2;
+            c = tc + r - nr - sl * 0;
+            yaw = nyaw; r = nr;
+        }
+        return null;
+    }
+
+    private static double angDiff(double a, double b) {
+        double d = b - a;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return d;
+    }
+
+    /** 새 길 배관이 앞서 놓인 길 배관들과 부딪히지 않는지(바로 앞 배관과는 맞닿는 시작 부분만 허용). */
+    private static boolean routeOk(Hall h, ArrayList<Seg> prev, Seg s) {
+        for (int j = 0; j < prev.size(); j++) {
+            Seg o = prev.get(j);
+            boolean adj = j == prev.size() - 1;
+            int n = Math.max(2, (int) (s.len / 1.5));
+            for (int i = 0; i <= n; i++) {
+                double t = i / (double) n;
+                if (adj && t * s.len < 8) continue;
+                double[] d = o.dist(s.ax + (s.bx - s.ax) * t, s.ay + (s.by - s.ay) * t, s.az + (s.bz - s.az) * t);
+                if (Math.sqrt(d[0]) < o.r + s.r + 4) return false;
+            }
+        }
+        return true;
+    }
+
+    /** 예비 길(갈아타는 길을 못 만들었을 때): 이어진 배관. */
+    private static ArrayList<Seg> fallbackRoute(Hall h, SplittableRandom rng, double y0, double yEnd, double[] end) {
+        ArrayList<double[]> pts = new ArrayList<>();
+        pts.add(new double[]{h.spx - 12, y0, h.spz});
+        pts.add(new double[]{h.cx + 80, 0, h.cz + 60});
+        pts.add(new double[]{h.cx + 80, 0, h.cz - 80});
+        pts.add(new double[]{h.cx - 40, 0, h.cz - 80});
+        pts.add(end);
+        double total = 0;
+        for (int i = 1; i < pts.size(); i++) total += hdist(pts.get(i - 1), pts.get(i));
+        double acc = 0;
+        for (int i = 1; i < pts.size() - 1; i++) {
+            acc += hdist(pts.get(i - 1), pts.get(i));
+            pts.get(i)[1] = y0 + (yEnd - y0) * acc / total;
+        }
+        ArrayList<Seg> out = new ArrayList<>();
+        for (int i = 1; i < pts.size(); i++) {
+            double[] a = pts.get(i - 1), b = pts.get(i);
+            out.add(walkSeg(a[0], a[1], a[2], b[0], b[1], b[2], ROUTE_R, pickMat(rng)));
+        }
+        return out;
     }
 
     private static double hdist(double[] a, double[] b) {
