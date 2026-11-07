@@ -10,7 +10,7 @@ import net.minecraftforge.fml.common.Mod;
 
 /**
  * 최하층 판 아래(배관 공간)에 있을 때 플레이어를 둘러싼 검은 안개: 가까운 곳만 보이고 그 너머는 어둠에 묻힌다.
- * 시야 거리가 짧아도 허공이나 하늘이 보이지 않아 닫힌 공간처럼 느껴진다. 판을 지나며 서서히 바뀜(밝기 효과와 같은 구간).
+ * 시야 거리가 짧아도 허공이나 하늘이 보이지 않아 닫힌 공간처럼 느껴진다. 판 아랫면 근처에서 바로 바뀜(밝기 효과와 같은 구간).
  */
 @Mod.EventBusSubscriber(modid = TierCityMod.MODID, value = Dist.CLIENT)
 public final class PipeFog {
@@ -21,7 +21,7 @@ public final class PipeFog {
     /** 0: 판 위, 1: 판 아래 깊숙이. */
     static double depth(double camY) {
         double under = CityLayout.layerBottom(0);
-        double t = (under + 4 - camY) / 14.0;
+        double t = (under + 2 - camY) / 3.0;                     // 판 아랫면 근처 3칸에서 바로 바뀜
         return Math.max(0, Math.min(1, t));
     }
 

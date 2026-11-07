@@ -16,5 +16,11 @@
   "block.tiercity.statue_head": "석상 머리",
   "block.tiercity.koi_orange": "가짜 잉어(주황)",
   "block.tiercity.koi_white": "가짜 잉어(흰색)",
-  "block.tiercity.koi_kohaku": "가짜 잉어(홍백)"
+  "block.tiercity.koi_kohaku": "가짜 잉어(홍백)",
+  "block.tiercity.statue_head_right": "석상 머리(오른쪽)",
+  "block.tiercity.statue_neck": "석상 목",
+  "block.tiercity.statue_neck_back": "석상 뒷목",
+  "item.tiercity.flashlight": "손전등",
+  "item.tiercity.flashlight.on": "켜짐",
+  "item.tiercity.flashlight.off": "꺼짐 (우클릭으로 켜기)"
 }

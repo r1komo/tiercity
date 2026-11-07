@@ -3,7 +3,10 @@ package com.example.tiercity;
 import com.mojang.serialization.Codec;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Block;
@@ -27,6 +30,10 @@ public class TierCityMod {
     public static final DeferredRegister<Codec<? extends ChunkGenerator>> CHUNK_GENERATORS =
             DeferredRegister.create(Registries.CHUNK_GENERATOR, MODID);
     public static final DeferredRegister<Block> BLOCKS = DeferredRegister.create(Registries.BLOCK, MODID);
+    public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(Registries.ITEM, MODID);
+
+    /** 손전등(우클릭으로 켜고 끔). */
+    public static final RegistryObject<Item> FLASHLIGHT = ITEMS.register("flashlight", () -> new FlashlightItem(new Item.Properties().stacksTo(1)));
 
     /**
      * 인공 하늘 패널: 아랫면이 화면에서 진짜 하늘로 그려진다(client/SkyWindowRenderer).
@@ -48,6 +55,10 @@ public class TierCityMod {
     public static final RegistryObject<Block> STATUE_MOUTH_LEFT = BLOCKS.register("statue_mouth_left", () -> new StatueFaceBlock(statueProps()));
     public static final RegistryObject<Block> STATUE_MOUTH_RIGHT = BLOCKS.register("statue_mouth_right", () -> new StatueFaceBlock(statueProps()));
     public static final RegistryObject<Block> STATUE_HEAD = BLOCKS.register("statue_head", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    public static final RegistryObject<Block> STATUE_HEAD_RIGHT = BLOCKS.register("statue_head_right", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    /** 머리 바로 아래 몸통(뒷면이 비스듬히 깎임): 1x1용, 2x2 뒷줄용. */
+    public static final RegistryObject<Block> STATUE_NECK = BLOCKS.register("statue_neck", () -> new StatueFaceBlock(statueProps().noOcclusion()));
+    public static final RegistryObject<Block> STATUE_NECK_BACK = BLOCKS.register("statue_neck_back", () -> new StatueFaceBlock(statueProps().noOcclusion()));
 
     /** 가짜 잉어 3색(주황, 흰색, 홍백). */
     public static final RegistryObject<Block> KOI_ORANGE = BLOCKS.register("koi_orange", () -> new KoiBlock(koiProps()));
@@ -62,6 +73,10 @@ public class TierCityMod {
         return BlockBehaviour.Properties.of().mapColor(MapColor.QUARTZ).strength(1.5F, 6.0F).sound(SoundType.CALCITE);
     }
 
+    private static void addCreative(BuildCreativeModeTabContentsEvent event) {
+        if (event.getTabKey() == CreativeModeTabs.TOOLS_AND_UTILITIES) event.accept(FLASHLIGHT);
+    }
+
     /** 석상 블록 상태를 생성 코드(Landmarks)에 넣는다. 방향 번호: 0 남, 1 북, 2 동, 3 서. */
     static synchronized void injectStatueBlocks() {
         if (Landmarks.statueFace != null) return;
@@ -72,6 +87,9 @@ public class TierCityMod {
         Landmarks.statueMouthL = faced(STATUE_MOUTH_LEFT.get(), dirs);
         Landmarks.statueMouthR = faced(STATUE_MOUTH_RIGHT.get(), dirs);
         Landmarks.statueHead = faced(STATUE_HEAD.get(), dirs);
+        Landmarks.statueHeadR = faced(STATUE_HEAD_RIGHT.get(), dirs);
+        Landmarks.statueNeck = faced(STATUE_NECK.get(), dirs);
+        Landmarks.statueNeckBack = faced(STATUE_NECK_BACK.get(), dirs);
         Block[] kois = {KOI_ORANGE.get(), KOI_WHITE.get(), KOI_KOHAKU.get()};
         BlockState[][] ks = new BlockState[3][];
         for (int c = 0; c < 3; c++) {
@@ -97,6 +115,8 @@ public class TierCityMod {
         IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
         CHUNK_GENERATORS.register(bus);
         BLOCKS.register(bus);
+        ITEMS.register(bus);
+        bus.addListener(TierCityMod::addCreative);
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, TierCityConfig.SPEC);
     }
 }

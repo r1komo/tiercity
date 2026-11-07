@@ -69,7 +69,7 @@ final class Landmarks {
     /** 방향 번호: 0 +z(남), 1 -z(북), 2 +x(동), 3 -x(서). 얼굴이 바라보는 쪽. */
     static volatile BlockState statueStone = null;
     static volatile BlockState[] statueFace = null, statueEyeL = null, statueEyeR = null,
-            statueMouthL = null, statueMouthR = null, statueHead = null;
+            statueMouthL = null, statueMouthR = null, statueHead = null, statueHeadR = null, statueNeck = null, statueNeckBack = null;
 
     private static BlockState sStone() {
         BlockState s = statueStone;
@@ -82,7 +82,7 @@ final class Landmarks {
 
     /** 눈을 얹지 않는 석상 블록(둥근 머리 위의 눈은 어색함). */
     static boolean noSnow(BlockState b) {
-        for (BlockState[] arr : new BlockState[][]{statueFace, statueEyeL, statueEyeR, statueHead}) {
+        for (BlockState[] arr : new BlockState[][]{statueFace, statueEyeL, statueEyeR, statueHead, statueHeadR, statueNeck, statueNeckBack}) {
             if (arr == null) continue;
             for (BlockState s : arr) if (s == b) return true;
         }
@@ -132,6 +132,7 @@ final class Landmarks {
             }
             if (cr >= h) return null;
             if (size == 1) {
+                if (cr == h - 2) return pick(statueNeck, face, sStone());
                 return cr == h - 1 ? pick(statueFace, face, Blocks.WHITE_CONCRETE.defaultBlockState()) : sStone();
             }
             int fx = dirX(face), fz = dirZ(face);
@@ -140,9 +141,10 @@ final class Landmarks {
             boolean left = lx != 0 ? (lx > 0 ? ox == 1 : ox == 0) : (lz > 0 ? oz == 1 : oz == 0);
             if (cr == h - 1) {
                 // 뒷줄 둥근 머리: 머리 블록의 둥근 중심은 모델의 앞-안쪽 모서리. 오른쪽 뒤는 시계 방향으로 한 번 돌려 씀
-                if (!front) return pick(statueHead, left ? face : cw(face), sStone());
+                if (!front) return left ? pick(statueHead, face, sStone()) : pick(statueHeadR, face, sStone());
                 return left ? pick(statueEyeL, face, EYE_DARK) : pick(statueEyeR, face, EYE_DARK);
             }
+            if (cr == h - 2 && !front) return pick(statueNeckBack, face, sStone());
             if (cr == h - 2 && front) {
                 return left ? pick(statueMouthL, face, Blocks.WHITE_CONCRETE.defaultBlockState())
                         : pick(statueMouthR, face, Blocks.WHITE_CONCRETE.defaultBlockState());

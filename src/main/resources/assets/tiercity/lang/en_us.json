@@ -16,5 +16,11 @@
   "block.tiercity.statue_head": "Statue Head",
   "block.tiercity.koi_orange": "Fake Koi (Orange)",
   "block.tiercity.koi_white": "Fake Koi (White)",
-  "block.tiercity.koi_kohaku": "Fake Koi (Kohaku)"
+  "block.tiercity.koi_kohaku": "Fake Koi (Kohaku)",
+  "block.tiercity.statue_head_right": "Statue Head (Right)",
+  "block.tiercity.statue_neck": "Statue Neck",
+  "block.tiercity.statue_neck_back": "Statue Back",
+  "item.tiercity.flashlight": "Flashlight",
+  "item.tiercity.flashlight.on": "On",
+  "item.tiercity.flashlight.off": "Off (right-click to turn on)"
 }

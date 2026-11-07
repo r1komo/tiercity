@@ -12,7 +12,9 @@ import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterDimensionSpecialEffectsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import com.mojang.blaze3d.vertex.PoseStack;
 
 /**
  * 층상 도시 차원의 화면 효과: 하늘은 오버월드와 같고, 구름은 맨 위층보다 위에 둔다.
@@ -23,7 +25,7 @@ import org.joml.Vector3f;
 public final class TierCityEffects extends DimensionSpecialEffects {
     public static final ResourceLocation ID = new ResourceLocation(TierCityMod.MODID, "layered_city");
     private static final float AMBIENT_HIGH = 0.3F;     // dimension_type의 ambient_light와 같아야 함
-    private static final float AMBIENT_LOW = 0.03F;     // 판 아래에서의 기본 밝기
+    private static final float AMBIENT_LOW = 0.08F;     // 판 아래에서의 기본 밝기(가까운 곳은 어렴풋이 보임, 먼 곳은 검은 안개)
 
     public TierCityEffects() {
         super(CityLayout.MIN_Y + CityLayout.HEIGHT - 8, true, SkyType.NORMAL, false, false);
@@ -37,6 +39,23 @@ public final class TierCityEffects extends DimensionSpecialEffects {
     @Override
     public Vec3 getBrightnessDependentFogColor(Vec3 color, float brightness) {
         return color.multiply(brightness * 0.94F + 0.06F, brightness * 0.94F + 0.06F, brightness * 0.91F + 0.09F);
+    }
+
+    /** 판 아래에서는 하늘(해, 달, 별)과 구름을 그리지 않는다: 배경은 검은 안개색만 남는다. */
+    private static boolean underPlate(Camera camera) {
+        return camera != null && PipeFog.depth(camera.getPosition().y) >= 0.5;
+    }
+
+    @Override
+    public boolean renderSky(ClientLevel level, int ticks, float partialTick, PoseStack poseStack, Camera camera,
+                             Matrix4f projectionMatrix, boolean isFoggy, Runnable setupFog) {
+        return underPlate(camera);
+    }
+
+    @Override
+    public boolean renderClouds(ClientLevel level, int ticks, float partialTick, PoseStack poseStack,
+                                double camX, double camY, double camZ, Matrix4f projectionMatrix) {
+        return PipeFog.depth(camY) >= 0.5;
     }
 
     @Override
@@ -56,11 +75,8 @@ public final class TierCityEffects extends DimensionSpecialEffects {
                                      float skyLight, int pixelX, int pixelY, Vector3f colors) {
         Camera cam = Minecraft.getInstance().gameRenderer.getMainCamera();
         if (cam == null) return;
-        double y = cam.getPosition().y;
-        double under = CityLayout.layerBottom(0);                  // 판 아랫면
-        double t = (under + 4 - y) / 14.0;                          // 판 속을 지나며 서서히 바뀜
+        double t = PipeFog.depth(cam.getPosition().y);
         if (t <= 0) return;
-        if (t > 1) t = 1;
         int lv = Math.max(pixelX, pixelY);                          // 이 칸의 밝은 쪽 빛(블록빛, 하늘빛)
         float k = curve(AMBIENT_LOW, lv) / curve(AMBIENT_HIGH, lv);
         float m = (float) (1.0 - (1.0 - k) * t);
