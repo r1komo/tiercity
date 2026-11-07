@@ -25,6 +25,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 public final class TierCityEffects extends DimensionSpecialEffects {
     public static final ResourceLocation ID = new ResourceLocation(TierCityMod.MODID, "layered_city");
     private static final float AMBIENT_HIGH = 0.3F;     // dimension_type의 ambient_light와 같아야 함
+    private static final float AMBIENT_NIGHT = 0.1F;    // 밤의 기본 밝기
     private static final float AMBIENT_LOW = 0.08F;     // 판 아래에서의 기본 밝기(가까운 곳은 어렴풋이 보임, 먼 곳은 검은 안개)
 
     public TierCityEffects() {
@@ -73,13 +74,16 @@ public final class TierCityEffects extends DimensionSpecialEffects {
     @Override
     public void adjustLightmapColors(ClientLevel level, float partialTicks, float skyDarken, float blockLightRedFlicker,
                                      float skyLight, int pixelX, int pixelY, Vector3f colors) {
+        // 밤: 하늘이 어두워질수록 기본 밝기를 0.3에서 0.1로 낮춤(가로등, 불 켜진 창은 그대로)
+        float night = Math.max(0F, Math.min(1F, (1.0F - skyDarken) / 0.8F));
+        float amb = AMBIENT_HIGH - (AMBIENT_HIGH - AMBIENT_NIGHT) * night;
+        // 판 아래(배관 공간): 더 어둡게
         Camera cam = Minecraft.getInstance().gameRenderer.getMainCamera();
-        if (cam == null) return;
-        double t = PipeFog.depth(cam.getPosition().y);
-        if (t <= 0) return;
-        int lv = Math.max(pixelX, pixelY);                          // 이 칸의 밝은 쪽 빛(블록빛, 하늘빛)
-        float k = curve(AMBIENT_LOW, lv) / curve(AMBIENT_HIGH, lv);
-        float m = (float) (1.0 - (1.0 - k) * t);
-        colors.mul(m);
+        double t = cam == null ? 0 : PipeFog.depth(cam.getPosition().y);
+        if (t > 0) amb = (float) (amb + (AMBIENT_LOW - amb) * t);
+        if (Math.abs(amb - AMBIENT_HIGH) < 1e-4) return;
+        int lv = Math.max(pixelX, Math.round(pixelY * skyLight));   // 밤에는 하늘빛이 약하므로 실제 밝기 기준
+        colors.mul(curve(amb, lv) / curve(AMBIENT_HIGH, lv));
     }
+
 }

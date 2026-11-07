@@ -1,0 +1,39 @@
+{
+ "variants": {
+  "axis=z,sag=0": {
+   "model": "tiercity:block/power_line_0"
+  },
+  "axis=x,sag=0": {
+   "model": "tiercity:block/power_line_0",
+   "y": 90
+  },
+  "axis=z,sag=1": {
+   "model": "tiercity:block/power_line_1"
+  },
+  "axis=x,sag=1": {
+   "model": "tiercity:block/power_line_1",
+   "y": 90
+  },
+  "axis=z,sag=2": {
+   "model": "tiercity:block/power_line_2"
+  },
+  "axis=x,sag=2": {
+   "model": "tiercity:block/power_line_2",
+   "y": 90
+  },
+  "axis=z,sag=3": {
+   "model": "tiercity:block/power_line_3"
+  },
+  "axis=x,sag=3": {
+   "model": "tiercity:block/power_line_3",
+   "y": 90
+  },
+  "axis=z,sag=4": {
+   "model": "tiercity:block/power_line_4"
+  },
+  "axis=x,sag=4": {
+   "model": "tiercity:block/power_line_4",
+   "y": 90
+  }
+ }
+}

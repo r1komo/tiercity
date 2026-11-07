@@ -1,0 +1,11 @@
+{
+ "variants": {
+  "axis=x": {
+   "model": "tiercity:block/pole_crossarm"
+  },
+  "axis=z": {
+   "model": "tiercity:block/pole_crossarm",
+   "y": 90
+  }
+ }
+}

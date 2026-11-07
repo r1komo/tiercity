@@ -22,5 +22,10 @@
   "block.tiercity.statue_neck_back": "석상 뒷목",
   "item.tiercity.flashlight": "손전등",
   "item.tiercity.flashlight.on": "켜짐",
-  "item.tiercity.flashlight.off": "꺼짐 (우클릭으로 켜기)"
+  "item.tiercity.flashlight.off": "꺼짐 (우클릭으로 켜기)",
+  "block.tiercity.utility_pole": "전봇대",
+  "block.tiercity.pole_crossarm": "전봇대 완목",
+  "block.tiercity.power_line": "전선",
+  "block.tiercity.pipe_small": "가는 배관",
+  "block.tiercity.pipe_medium": "배관"
 }

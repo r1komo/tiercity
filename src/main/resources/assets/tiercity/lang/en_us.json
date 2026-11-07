@@ -22,5 +22,10 @@
   "block.tiercity.statue_neck_back": "Statue Back",
   "item.tiercity.flashlight": "Flashlight",
   "item.tiercity.flashlight.on": "On",
-  "item.tiercity.flashlight.off": "Off (right-click to turn on)"
+  "item.tiercity.flashlight.off": "Off (right-click to turn on)",
+  "block.tiercity.utility_pole": "Utility Pole",
+  "block.tiercity.pole_crossarm": "Pole Crossarm",
+  "block.tiercity.power_line": "Power Line",
+  "block.tiercity.pipe_small": "Small Pipe",
+  "block.tiercity.pipe_medium": "Pipe"
 }

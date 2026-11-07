@@ -8,6 +8,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
@@ -60,6 +61,17 @@ public class TierCityMod {
     public static final RegistryObject<Block> STATUE_NECK = BLOCKS.register("statue_neck", () -> new StatueFaceBlock(statueProps().noOcclusion()));
     public static final RegistryObject<Block> STATUE_NECK_BACK = BLOCKS.register("statue_neck_back", () -> new StatueFaceBlock(statueProps().noOcclusion()));
 
+    /** 거리 설비: 전봇대, 완목, 전선, 가는 배관 두 굵기. */
+    public static final RegistryObject<Block> UTILITY_POLE = BLOCKS.register("utility_pole", () -> new FixtureBlocks.Pole(fixtureProps(MapColor.STONE).noOcclusion()));
+    public static final RegistryObject<Block> POLE_CROSSARM = BLOCKS.register("pole_crossarm", () -> new FixtureBlocks.Crossarm(fixtureProps(MapColor.STONE).noOcclusion()));
+    public static final RegistryObject<Block> POWER_LINE = BLOCKS.register("power_line", () -> new FixtureBlocks.Wire(fixtureProps(MapColor.COLOR_BLACK).noOcclusion().noCollission().instabreak()));
+    public static final RegistryObject<Block> PIPE_SMALL = BLOCKS.register("pipe_small", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 5));
+    public static final RegistryObject<Block> PIPE_MEDIUM = BLOCKS.register("pipe_medium", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 9));
+
+    private static BlockBehaviour.Properties fixtureProps(MapColor c) {
+        return BlockBehaviour.Properties.of().mapColor(c).strength(1.5F, 6.0F).sound(SoundType.METAL);
+    }
+
     /** 가짜 잉어 3색(주황, 흰색, 홍백). */
     public static final RegistryObject<Block> KOI_ORANGE = BLOCKS.register("koi_orange", () -> new KoiBlock(koiProps()));
     public static final RegistryObject<Block> KOI_WHITE = BLOCKS.register("koi_white", () -> new KoiBlock(koiProps()));
@@ -97,6 +109,25 @@ public class TierCityMod {
             for (int i = 0; i < 4; i++) ks[c][i] = ks[c][i].setValue(BlockStateProperties.WATERLOGGED, true);
         }
         Landmarks.koiStates = ks;
+        // 거리 설비
+        Fixtures.pole = UTILITY_POLE.get().defaultBlockState();
+        Fixtures.crossarm = new BlockState[]{
+                POLE_CROSSARM.get().defaultBlockState().setValue(FixtureBlocks.Crossarm.AXIS, Direction.Axis.X),
+                POLE_CROSSARM.get().defaultBlockState().setValue(FixtureBlocks.Crossarm.AXIS, Direction.Axis.Z)};
+        BlockState[][] w = new BlockState[2][Fixtures.SAG_LEVELS];
+        for (int a = 0; a < 2; a++) for (int s = 0; s < Fixtures.SAG_LEVELS; s++) {
+            w[a][s] = POWER_LINE.get().defaultBlockState().setValue(FixtureBlocks.Wire.AXIS, a == 0 ? Direction.Axis.X : Direction.Axis.Z)
+                    .setValue(FixtureBlocks.Wire.SAG, s);
+        }
+        Fixtures.wire = w;
+        Direction.Axis[] ax3 = {Direction.Axis.X, Direction.Axis.Y, Direction.Axis.Z};
+        BlockState[] ps = new BlockState[3], pm = new BlockState[3];
+        for (int i = 0; i < 3; i++) {
+            ps[i] = PIPE_SMALL.get().defaultBlockState().setValue(RotatedPillarBlock.AXIS, ax3[i]);
+            pm[i] = PIPE_MEDIUM.get().defaultBlockState().setValue(RotatedPillarBlock.AXIS, ax3[i]);
+        }
+        Fixtures.pipeS = ps;
+        Fixtures.pipeM = pm;
         Landmarks.metalPlant = Blocks.IRON_BARS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true);
         Landmarks.statueFace = faced(STATUE_FACE.get(), dirs);
     }

@@ -78,8 +78,12 @@ final class DistrictLayout {
         Landmarks.Struct st; // 이 컬럼을 덮는 구조물(건물, 석상, 사원, 공군 기지)
         int snowY = -1;      // 얇은 눈이 쌓이는 y
         int maxY;
+        int pole;            // 전봇대: 0 없음, 1 서 있음, 2 부러짐
+        int poleH;           // 부러진 전봇대 높이
+        int poleAxis;        // 완목 방향(0 x, 1 z)
+        int wireY = Integer.MIN_VALUE, wireSag, wireAxis;   // 전선
 
-        boolean blocksStanding() { return st != null || light != L_NONE; }
+        boolean blocksStanding() { return st != null || light != L_NONE || pole != 0; }
 
         /** 서 있을 수 있는 y. */
         int standY() { return snowY >= 0 ? snowY : top + pile + 1; }
@@ -300,7 +304,7 @@ final class DistrictLayout {
         }
     }
 
-    /** 골목 위 설치물: 0 배관(축 방향 원통), 1 다리, 2 가로등. */
+    /** 골목 위 설치물: 0 배관(축 방향 원통), 1 다리, 2 가로등, 3 벽을 타고 내려오는 배수관, 4 골목을 건너는 전선. */
     static final class Fx {
         int type, axis, x0, z0, x1, z1, y, r, mat, light;
 
@@ -313,7 +317,7 @@ final class DistrictLayout {
             return x >= x0 && x <= x1 && z >= z0 && z <= z1;
         }
 
-        int top() { return type == 0 ? y + r + 1 : type == 1 ? y + 1 : Integer.MIN_VALUE; }
+        int top() { return type == 0 ? y + r + 1 : type == 1 || type == 3 || type == 4 ? y + 1 : Integer.MIN_VALUE; }
     }
 
     /** 부지 사이의 골목(쪼갠 틈). axis 0: 틈이 x 방향으로 벌어짐(골목은 z 방향으로 뻗음). */
@@ -836,6 +840,39 @@ final class DistrictLayout {
                 B.doors = append(B.doors, dB);
             }
         }
+        // 벽을 타고 내려오는 가는 배수관(건물 벽 바로 옆 칸)
+        for (int side = 0; side < 2; side++) {
+            int g = side == 0 ? g0 : g1, wallG = side == 0 ? g0 - 1 : g1 + 1;
+            for (int a = a0 + 2 + r.nextInt(8); a <= a1 - 2; a += 8 + r.nextInt(12)) {
+                if (r.nextDouble() > (c.city ? 0.55 : 0.3)) continue;
+                Building W = sideBuilding(lot, ax, wallG, a);
+                if (W == null) continue;
+                int top = colTopAt(c.seed, W, ax, wallG, a) - 1;
+                if (!c.city) top = c.base + 2 + r.nextInt(Math.max(1, top - c.base - 2));   // 1층: 중간에서 끊김
+                if (top <= c.base + 2) continue;
+                Fx f = new Fx();
+                f.type = 3; f.y = top;
+                if (ax) { f.x0 = f.x1 = g; f.z0 = f.z1 = a; } else { f.z0 = f.z1 = g; f.x0 = f.x1 = a; }
+                out.add(f);
+            }
+        }
+        // 골목을 건너 건물과 건물을 잇는 전선(2층)
+        if (c.city && al.gap >= 3) {
+            int nW = r.nextInt(4);
+            for (int i = 0; i < nW; i++) {
+                int a = a0 + 2 + r.nextInt(Math.max(1, len - 4));
+                Building A = sideBuilding(lot, ax, g0 - 1, a), B = sideBuilding(lot, ax, g1 + 1, a);
+                if (A == null || B == null) continue;
+                int lim = Math.min(colTopAt(c.seed, A, ax, g0 - 1, a), colTopAt(c.seed, B, ax, g1 + 1, a)) - 2;
+                int lo = c.base + 6;
+                if (lim < lo) continue;
+                Fx f = new Fx();
+                f.type = 4; f.y = lo + r.nextInt(lim - lo + 1); f.axis = ax ? 0 : 1;
+                f.r = (int) Math.round(al.gap * (0.6 + 0.6 * r.nextDouble()));   // 처짐(1/10칸)
+                if (ax) { f.x0 = g0; f.x1 = g1; f.z0 = f.z1 = a; } else { f.z0 = g0; f.z1 = g1; f.x0 = f.x1 = a; }
+                out.add(f);
+            }
+        }
         // 가로등(넓은 골목 가운데 줄)
         if (al.gap >= 5) {
             int mid = (g0 + g1) / 2;
@@ -889,6 +926,7 @@ final class DistrictLayout {
                 boolean flange = f.r >= 1 && Math.floorMod(along, 7) == 3;
                 double rr = f.r * f.r + 0.8 * f.r, rf = (f.r + 1) * (f.r + 1) + 0.8 * (f.r + 1);
                 if (d2 <= rr) {
+                    if (f.r == 0) return Fixtures.pipeM(f.axis == 0 ? 0 : 2);            // 가는 배관은 전용 배관 블록
                     if (k == 0 && CityLayout.hash01(seed, x * 7 + y, z, 7310) < 0.15) return PIPE_RUST;
                     return f.mat == 0 ? PIPE_A : f.mat == 1 ? PIPE_B : PIPE_C;
                 }
@@ -906,6 +944,17 @@ final class DistrictLayout {
                     return edge ? LAMP_CAP : null;
                 }
                 return null;
+            }
+            case 3: {
+                if (x != f.x0 || z != f.z0 || y <= deckTop || y > f.y) return null;
+                return Fixtures.pipeS(1);
+            }
+            case 4: {
+                if (!f.covers(x, z)) return null;
+                int g = f.axis == 0 ? x - f.x0 : z - f.z0, n = f.axis == 0 ? f.x1 - f.x0 + 1 : f.z1 - f.z0 + 1;
+                double t = (g + 0.5) / n;
+                int[] w = Fixtures.wireAt(Fixtures.catenary(f.y + 14 / 16.0, f.y + 14 / 16.0, f.r / 10.0, t));
+                return y == w[0] ? Fixtures.wire(f.axis, w[1]) : null;
             }
             default: {
                 if (x != f.x0 || z != f.z0 || y <= deckTop) return null;
@@ -1257,6 +1306,8 @@ final class DistrictLayout {
                     if (light != L_NONE) {
                         dc.light = light;
                         if (light == L_STUB) dc.lightH = 1 + CityLayout.rand(seed, x, z, 891, 3);
+                    } else {
+                        poleWire(seed, k, ns && dx == ROAD_HALF, x, z, li, lj, ix, jz, nearW, dza <= dzb, dc);
                     }
                 }
             } else {
@@ -1289,8 +1340,14 @@ final class DistrictLayout {
             }
         }
 
+        // 맨 위층: 눈 덮인 설원에 검은 돌덩이만
+        if (finalLayer && !nearGrid(x, z, PLAZA_CLEAR)) {
+            Monolith m = monolithAt(p, seed, k, x, z);
+            if (m != null) { dc.st = m; any = true; }
+        }
+
         // 눈: 하늘로 열린 곳의 맨 위 표면
-        if (snow > 0 && dc.light == L_NONE && !(layer.slab() && dc.st == null && dc.pile == 0)) {   // 반 블록 위에는 눈이 버티지 못함
+        if (snow > 0 && dc.light == L_NONE && dc.pole == 0 && !(layer.slab() && dc.st == null && dc.pile == 0)) {   // 반 블록 위에는 눈이 버티지 못함
             int topSolid = dc.top + dc.pile;
             if (dc.st != null) {
                 topSolid = Math.max(topSolid, structTopSolid(seed, dc.st, x, z, layer.top()));
@@ -1310,6 +1367,9 @@ final class DistrictLayout {
         if (dc.light == L_STUB) mx = Math.max(mx, dc.top + dc.lightH);
         else if (dc.light != L_NONE) mx = Math.max(mx, dc.top + POLE_H + 2);
         if (dc.snowY >= 0) mx = Math.max(mx, dc.snowY);
+        if (dc.pole == 1) mx = Math.max(mx, dc.top + Fixtures.POLE_H);
+        else if (dc.pole == 2) mx = Math.max(mx, dc.top + dc.poleH);
+        if (dc.wireY != Integer.MIN_VALUE) mx = Math.max(mx, dc.wireY);
         dc.maxY = mx;
         return dc;
     }
@@ -1332,6 +1392,123 @@ final class DistrictLayout {
         }
         if (r < 0.04) return L_NONE;
         return r < 0.92 ? L_ON : L_OFF;
+    }
+
+    // ---------------- 맨 위층의 검은 돌덩이 ----------------
+    private static final BlockState MONO = Blocks.BLACK_CONCRETE.defaultBlockState();
+    private static final BlockState MONO_B = Blocks.POLISHED_BLACKSTONE.defaultBlockState();
+    static final int MONO_CELL = 56;
+
+    /** 매끈한 검은 돌덩이: 반쯤 묻히거나 기울어 있음. */
+    static final class Monolith implements Landmarks.Struct {
+        int cx, cz, hw, hd, h, bury, id, topY;
+        double lx, lz;
+
+        @Override
+        public BlockState block(long seed, int x, int y, int z, int deckTop) {
+            int base = deckTop - bury;
+            int rel = y - base;
+            if (rel < 0 || rel >= h) return null;
+            double ox = cx + lx * rel, oz = cz + lz * rel;
+            if (Math.abs(x + 0.5 - ox) > hw + 0.5 || Math.abs(z + 0.5 - oz) > hd + 0.5) return null;
+            int top = h - CityLayout.rand(seed, x, z, 931 + id, 2);
+            if (rel >= top) return null;
+            if (y <= deckTop) return MONO;
+            return CityLayout.hash01(seed, x * 7 + y, z, 932) < 0.12 ? MONO_B : MONO;
+        }
+
+        @Override
+        public int maxY() { return topY; }
+    }
+
+    private static final ThreadLocal<HashMap<Long, Monolith>> MONO_CACHE = ThreadLocal.withInitial(HashMap::new);
+    private static final Monolith NO_MONO = new Monolith();
+
+    private static Monolith monolith(CityLayout.Params p, long seed, int k, int i, int j) {
+        HashMap<Long, Monolith> cache = MONO_CACHE.get();
+        long key = CityLayout.hash(seed ^ ((long) p.hashCode() * 0xD6E8FEB86659FD93L), i, j, 930 + 31 * k);
+        Monolith m = cache.get(key);
+        if (m != null) return m == NO_MONO ? null : m;
+        m = NO_MONO;
+        if (CityLayout.hash01(seed, i, j, 933 + k) < 0.5) {
+            Monolith n = new Monolith();
+            n.cx = i * MONO_CELL + 8 + CityLayout.rand(seed, i, j, 934, MONO_CELL - 16);
+            n.cz = j * MONO_CELL + 8 + CityLayout.rand(seed, i, j, 935, MONO_CELL - 16);
+            double big = Math.pow(CityLayout.hash01(seed, i, j, 944), 2.0);          // 대부분 작고, 가끔 아주 큼
+            n.hw = 1 + (int) Math.round(big * 6) + CityLayout.rand(seed, i, j, 936, 2);
+            n.hd = 1 + (int) Math.round(big * 6) + CityLayout.rand(seed, i, j, 937, 2);
+            n.h = 5 + (int) (10 * CityLayout.hash01(seed, i, j, 938) + 32 * big);
+            n.bury = 1 + CityLayout.rand(seed, i, j, 939, Math.max(1, n.h / 3));
+            if (CityLayout.hash01(seed, i, j, 940) < 0.45) {
+                n.lx = (CityLayout.hash01(seed, i, j, 941) - 0.5) * 0.5;
+                n.lz = (CityLayout.hash01(seed, i, j, 942) - 0.5) * 0.5;
+            }
+            n.id = (int) (CityLayout.hash01(seed, i, j, 943) * 1000);
+            CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, n.cx, n.cz);
+            if (l != null && !nearGrid(n.cx, n.cz, PLAZA_CLEAR + 10)) {
+                n.topY = l.top() + 4 - n.bury + n.h;          // 판 높이 차(최대 몇 칸) 여유
+                m = n;
+            }
+        }
+        if (cache.size() > 4096) cache.clear();
+        cache.put(key, m);
+        return m == NO_MONO ? null : m;
+    }
+
+    static Monolith monolithAt(CityLayout.Params p, long seed, int k, int x, int z) {
+        int i0 = Math.floorDiv(x, MONO_CELL), j0 = Math.floorDiv(z, MONO_CELL);
+        for (int a = -1; a <= 1; a++) for (int b = -1; b <= 1; b++) {
+            Monolith m = monolith(p, seed, k, i0 + a, j0 + b);
+            if (m == null) continue;
+            double reachX = Math.abs(m.lx) * m.h + m.hw + 1, reachZ = Math.abs(m.lz) * m.h + m.hd + 1;
+            double mx = m.cx + m.lx * m.h / 2.0, mz = m.cz + m.lz * m.h / 2.0;
+            if (Math.abs(x + 0.5 - mx) <= reachX && Math.abs(z + 0.5 - mz) <= reachZ) return m;
+        }
+        return null;
+    }
+
+    static final int POLE_STEP = 36;           // 전봇대 간격
+
+    /** 길가 연석 한쪽(가로등 첫째 줄)에 전봇대가 36칸마다 서고, 이웃한 두 전봇대 사이에 전선 두 가닥이 늘어진다. */
+    private static void poleWire(long seed, int k, boolean onNs, int x, int z, int li, int lj, int ix, int jz,
+                                 boolean westOfLine, boolean northOfLine, Decor dc) {
+        boolean first = onNs ? westOfLine : northOfLine;
+        if (!first) return;
+        int along = onNs ? z : x;
+        int lineIdx = onNs ? li : lj;
+        int off = CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 895 + k, LIGHT_STEP);
+        int off2 = off + 6 + 12 * CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 905 + k, 3);   // 가로등 사이
+        int n = Math.floorDiv(along - off2, POLE_STEP);
+        int s0 = off2 + n * POLE_STEP, s1 = s0 + POLE_STEP;
+        int p0 = poleKind(seed, k, onNs, lineIdx, s0, ix, jz), p1 = poleKind(seed, k, onNs, lineIdx, s1, ix, jz);
+        int axisArm = onNs ? 0 : 1;                       // 길이 z로 뻗으면 완목은 x 방향
+        if (along == s0) {
+            if (p0 == 0) return;
+            dc.pole = p0;
+            dc.poleAxis = axisArm;
+            if (p0 == 2) dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 6);
+            return;
+        }
+        if (p0 != 1 || p1 != 1) return;
+        if (k == 0 && CityLayout.hash01(seed, lineIdx * 7 + (onNs ? 1 : 0), n, 907) < 0.5) return;   // 1층: 끊긴 전선
+        double t = (along - s0) / (double) POLE_STEP;
+        double end = dc.top + Fixtures.POLE_H - 1 + 14 / 16.0;
+        double sagD = k == 0 ? 2.4 : 1.5;
+        int[] w = Fixtures.wireAt(Fixtures.catenary(end, end, sagD, t));
+        dc.wireY = w[0];
+        dc.wireSag = w[1];
+        dc.wireAxis = onNs ? 1 : 0;
+    }
+
+    /** 이 자리 전봇대: 0 없음, 1 서 있음, 2 부러짐. 교차로 근처에는 없음. */
+    private static int poleKind(long seed, int k, boolean onNs, int lineIdx, int along, int ix, int jz) {
+        for (int j = -1; j <= 2; j++) {
+            int cross = onNs ? lineZ(seed, k, jz + j) : lineX(seed, k, ix + j);
+            if (Math.abs(along - cross) <= ROAD_HALF + 4) return 0;
+        }
+        double r = CityLayout.hash01(seed, lineIdx * 131 + (onNs ? 1 : 0), along, 908 + k);
+        if (k == 0) return r < 0.35 ? 0 : r < 0.6 ? 2 : 1;
+        return r < 0.03 ? 0 : 1;
     }
 
     private static int structTopSolid(long seed, Landmarks.Struct st, int x, int z, int deckTop) {
@@ -1380,6 +1557,14 @@ final class DistrictLayout {
             }
         }
         if (y > dc.top && y <= dc.top + dc.pile) return rubble(seed, x, y, z);
+        if (y == dc.wireY) return Fixtures.wire(dc.wireAxis, dc.wireSag);
+        if (dc.pole != 0 && y > dc.top) {
+            int rel = y - dc.top;
+            if (dc.pole == 2) return rel <= dc.poleH ? Fixtures.pole() : null;
+            if (rel < Fixtures.POLE_H) return Fixtures.pole();
+            if (rel == Fixtures.POLE_H) return Fixtures.crossarm(dc.poleAxis);
+            return null;
+        }
         if (dc.light != L_NONE && y > dc.top) {
             int rel = y - dc.top;
             if (dc.light == L_STUB) return rel <= dc.lightH ? POLE : null;

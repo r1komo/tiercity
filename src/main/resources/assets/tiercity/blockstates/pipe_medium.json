@@ -1,0 +1,16 @@
+{
+ "variants": {
+  "axis=y": {
+   "model": "tiercity:block/pipe_medium"
+  },
+  "axis=z": {
+   "model": "tiercity:block/pipe_medium",
+   "x": 90
+  },
+  "axis=x": {
+   "model": "tiercity:block/pipe_medium",
+   "x": 90,
+   "y": 90
+  }
+ }
+}

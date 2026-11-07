@@ -1,0 +1,43 @@
+{
+ "parent": "minecraft:block/block",
+ "ambientocclusion": false,
+ "textures": {
+  "s": "tiercity:block/pipe_medium",
+  "e": "tiercity:block/pipe_end",
+  "particle": "tiercity:block/pipe_medium"
+ },
+ "elements": [
+  {
+   "from": [
+    3.5,
+    0,
+    3.5
+   ],
+   "to": [
+    12.5,
+    16,
+    12.5
+   ],
+   "faces": {
+    "north": {
+     "texture": "#s"
+    },
+    "south": {
+     "texture": "#s"
+    },
+    "east": {
+     "texture": "#s"
+    },
+    "west": {
+     "texture": "#s"
+    },
+    "up": {
+     "texture": "#e"
+    },
+    "down": {
+     "texture": "#e"
+    }
+   }
+  }
+ ]
+}
