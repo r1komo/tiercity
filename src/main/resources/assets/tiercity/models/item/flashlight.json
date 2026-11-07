@@ -1,6 +1,14 @@
 {
-  "parent": "minecraft:item/handheld",
-  "textures": {
+ "loader": "forge:separate_transforms",
+ "base": {
+  "parent": "tiercity:item/flashlight_3d"
+ },
+ "perspectives": {
+  "gui": {
+   "parent": "minecraft:item/generated",
+   "textures": {
     "layer0": "tiercity:item/flashlight"
+   }
   }
+ }
 }
