@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
@@ -66,7 +67,17 @@ public class TierCityMod {
     public static final RegistryObject<Block> POLE_CROSSARM = BLOCKS.register("pole_crossarm", () -> new FixtureBlocks.Crossarm(fixtureProps(MapColor.STONE).noOcclusion()));
     public static final RegistryObject<Block> POWER_LINE = BLOCKS.register("power_line", () -> new FixtureBlocks.Wire(fixtureProps(MapColor.COLOR_BLACK).noOcclusion().noCollission().instabreak()));
     public static final RegistryObject<Block> PIPE_SMALL = BLOCKS.register("pipe_small", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 5));
-    public static final RegistryObject<Block> PIPE_MEDIUM = BLOCKS.register("pipe_medium", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 9));
+    public static final RegistryObject<Block> PIPE_MEDIUM = BLOCKS.register("pipe_medium", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 10));
+    public static final RegistryObject<Block> PIPE_LARGE = BLOCKS.register("pipe_large", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 13));
+    public static final RegistryObject<Block> PIPE_CLAMP_V = BLOCKS.register("pipe_clamp_v", () -> new FixtureBlocks.Clamp(fixtureProps(MapColor.METAL).noOcclusion(), true));
+    public static final RegistryObject<Block> PIPE_CLAMP_H = BLOCKS.register("pipe_clamp_h", () -> new FixtureBlocks.Clamp(fixtureProps(MapColor.METAL).noOcclusion(), false));
+    public static final RegistryObject<Block> WIRE_ANCHOR = BLOCKS.register("wire_anchor", () -> new FixtureBlocks.Anchor(fixtureProps(MapColor.STONE).noOcclusion()));
+
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(Registries.BLOCK_ENTITY_TYPE, MODID);
+    /** 전선 연결점(완목, 벽 연결점). */
+    @SuppressWarnings("ConstantConditions")
+    public static final RegistryObject<BlockEntityType<WireBlockEntity>> WIRE_BE = BLOCK_ENTITIES.register("wire",
+            () -> BlockEntityType.Builder.of(WireBlockEntity::new, POLE_CROSSARM.get(), WIRE_ANCHOR.get()).build(null));
 
     private static BlockBehaviour.Properties fixtureProps(MapColor c) {
         return BlockBehaviour.Properties.of().mapColor(c).strength(1.5F, 6.0F).sound(SoundType.METAL);
@@ -128,6 +139,12 @@ public class TierCityMod {
         }
         Fixtures.pipeS = ps;
         Fixtures.pipeM = pm;
+        BlockState[] pl = new BlockState[3];
+        for (int i = 0; i < 3; i++) pl[i] = PIPE_LARGE.get().defaultBlockState().setValue(RotatedPillarBlock.AXIS, ax3[i]);
+        Fixtures.pipeL = pl;
+        Fixtures.clampV = faced(PIPE_CLAMP_V.get(), dirs);
+        Fixtures.clampH = faced(PIPE_CLAMP_H.get(), dirs);
+        Fixtures.anchor = faced(WIRE_ANCHOR.get(), dirs);
         Landmarks.metalPlant = Blocks.IRON_BARS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true);
         Landmarks.statueFace = faced(STATUE_FACE.get(), dirs);
     }
@@ -147,6 +164,7 @@ public class TierCityMod {
         CHUNK_GENERATORS.register(bus);
         BLOCKS.register(bus);
         ITEMS.register(bus);
+        BLOCK_ENTITIES.register(bus);
         bus.addListener(TierCityMod::addCreative);
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, TierCityConfig.SPEC);
     }

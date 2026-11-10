@@ -81,7 +81,7 @@ final class DistrictLayout {
         int pole;            // 전봇대: 0 없음, 1 서 있음, 2 부러짐
         int poleH;           // 부러진 전봇대 높이
         int poleAxis;        // 완목 방향(0 x, 1 z)
-        int wireY = Integer.MIN_VALUE, wireSag, wireAxis;   // 전선
+        int[] wireTo;        // 서 있는 전봇대: 전선이 이어지는 다음 전봇대 완목 좌표
 
         boolean blocksStanding() { return st != null || light != L_NONE || pole != 0; }
 
@@ -307,8 +307,10 @@ final class DistrictLayout {
     /** 골목 위 설치물: 0 배관(축 방향 원통), 1 다리, 2 가로등, 3 벽을 타고 내려오는 배수관, 4 골목을 건너는 전선. */
     static final class Fx {
         int type, axis, x0, z0, x1, z1, y, r, mat, light;
+        int wall = -1;                      // 벽에 붙은 배관: 벽 방향(0 남, 1 북, 2 동, 3 서)
 
         boolean covers(int x, int z) {
+            if (type == 4) return (x == x0 && z == z0) || (x == x1 && z == z1);
             int m = type == 0 ? r + (r >= 1 ? 1 : 0) : 0;
             if (type == 0) {
                 if (axis == 0) return x >= x0 && x <= x1 && Math.abs(z - z0) <= m;
@@ -758,50 +760,55 @@ final class DistrictLayout {
         int g0 = ax ? al.x0 : al.z0, g1 = ax ? al.x1 : al.z1;   // 틈 방향 범위
         int len = a1 - a0 + 1;
         // 양쪽 벽 건물(틈 바로 바깥 칸)
-        // 가로지르는 배관
+        // 가로지르는 배관: 양 끝이 실제로 서 있는 벽에 닿을 때만
         int nCross = (int) (len / (c.city ? 9.0 : 14.0) * (0.5 + r.nextDouble()));
         for (int i = 0; i < nCross; i++) {
             int a = a0 + 2 + r.nextInt(Math.max(1, len - 4));
-            int rad = c.city ? (r.nextDouble() < 0.75 ? 0 : 1) : (r.nextDouble() < 0.45 ? 0 : r.nextDouble() < 0.75 ? 1 : 2);
+            int rad = c.city ? (r.nextDouble() < 0.8 ? 0 : 1) : (r.nextDouble() < 0.55 ? 0 : r.nextDouble() < 0.75 ? 1 : 2);
             Building A = sideBuilding(lot, ax, g0 - 1, a), B = sideBuilding(lot, ax, g1 + 1, a);
             if (A == null || B == null) continue;
             int lim = Math.min(colTopAt(c.seed, A, ax, g0 - 1, a), colTopAt(c.seed, B, ax, g1 + 1, a)) - rad - 2;
             int lo = c.base + 4 + rad;
             if (lim < lo) continue;
+            int y = lo + r.nextInt(Math.min(lim - lo + 1, c.city ? 40 : 70));
+            if (!wallSolid(c.seed, A, ax, g0 - 1, a, y, c.base) || !wallSolid(c.seed, B, ax, g1 + 1, a, y, c.base)) continue;
             Fx f = new Fx();
-            f.type = 0; f.axis = ax ? 0 : 1; f.r = rad;
-            f.y = lo + r.nextInt(Math.min(lim - lo + 1, c.city ? 40 : 70));
+            f.type = 0; f.axis = ax ? 0 : 1; f.r = rad; f.y = y;
             if (ax) { f.x0 = g0; f.x1 = g1; f.z0 = f.z1 = a; } else { f.z0 = g0; f.z1 = g1; f.x0 = f.x1 = a; }
             f.mat = r.nextInt(3);
             out.add(f);
-            if (c.city && r.nextDouble() < 0.4 && rad == 0) {    // 가는 배관 묶음
+            if (c.city && r.nextDouble() < 0.4 && rad == 0) {    // 배관 묶음
                 Fx f2 = new Fx();
                 f2.type = 0; f2.axis = f.axis; f2.r = 0; f2.y = f.y + (r.nextBoolean() ? 1 : -1); f2.mat = f.mat;
                 if (ax) { f2.x0 = g0; f2.x1 = g1; f2.z0 = f2.z1 = a + 1; } else { f2.z0 = g0; f2.z1 = g1; f2.x0 = f2.x1 = a + 1; }
-                if (f2.y > c.base + 3) out.add(f2);
+                if (f2.y > c.base + 3 && wallSolid(c.seed, A, ax, g0 - 1, a + 1, f2.y, c.base)
+                        && wallSolid(c.seed, B, ax, g1 + 1, a + 1, f2.y, c.base)) out.add(f2);
             }
         }
-        // 벽을 따라가는 배관(틈이 4칸 이상)
-        if (al.gap >= 4) {
+        // 벽을 따라가는 배관: 벽 바로 옆 칸, 5칸마다 고정 클램프. 지나는 구간의 벽이 서 있어야 함
+        if (al.gap >= 3) {
             int nPar = (c.city ? 1 : 0) + r.nextInt(3);
             for (int i = 0; i < nPar; i++) {
                 boolean sideA = r.nextBoolean();
-                int g = sideA ? g0 + 1 : g1 - 1, wallG = sideA ? g0 - 1 : g1 + 1;
+                int g = sideA ? g0 : g1, wallG = sideA ? g0 - 1 : g1 + 1;
                 int s0 = a0 + r.nextInt(Math.max(1, len / 2)), s1 = Math.min(a1, s0 + 12 + r.nextInt(Math.max(1, len)));
-                int rad = c.city ? 0 : (r.nextDouble() < 0.5 ? 0 : 1);
                 int lim = Integer.MAX_VALUE;
                 boolean ok = true;
-                for (int t = 0; t <= 4 && ok; t++) {
-                    int a = s0 + (s1 - s0) * t / 4;
+                for (int a = s0; a <= s1 && ok; a += 3) {
                     Building W = sideBuilding(lot, ax, wallG, a);
                     if (W == null) { ok = false; break; }
-                    lim = Math.min(lim, colTopAt(c.seed, W, ax, wallG, a) - rad - 2);
+                    lim = Math.min(lim, colTopAt(c.seed, W, ax, wallG, a) - 2);
                 }
-                int lo = c.base + 3 + rad;
+                int lo = c.base + 3;
                 if (!ok || lim < lo) continue;
+                int y = lo + r.nextInt(Math.min(lim - lo + 1, 30));
+                for (int a = s0; a <= s1 && ok; a += 3) {
+                    if (!wallSolid(c.seed, sideBuilding(lot, ax, wallG, a), ax, wallG, a, y, c.base)) ok = false;
+                }
+                if (!ok) continue;
                 Fx f = new Fx();
-                f.type = 0; f.axis = ax ? 1 : 0; f.r = rad; f.mat = r.nextInt(3);
-                f.y = lo + r.nextInt(Math.min(lim - lo + 1, 30));
+                f.type = 0; f.axis = ax ? 1 : 0; f.r = 0; f.mat = r.nextInt(3); f.y = y;
+                f.wall = ax ? (sideA ? 3 : 2) : (sideA ? 1 : 0);
                 if (ax) { f.x0 = f.x1 = g; f.z0 = s0; f.z1 = s1; } else { f.z0 = f.z1 = g; f.x0 = s0; f.x1 = s1; }
                 out.add(f);
             }
@@ -840,7 +847,7 @@ final class DistrictLayout {
                 B.doors = append(B.doors, dB);
             }
         }
-        // 벽을 타고 내려오는 가는 배수관(건물 벽 바로 옆 칸)
+        // 벽을 타고 내려오는 배수관(건물 벽 바로 옆 칸, 4칸마다 클램프). 벽이 서 있는 높이까지만
         for (int side = 0; side < 2; side++) {
             int g = side == 0 ? g0 : g1, wallG = side == 0 ? g0 - 1 : g1 + 1;
             for (int a = a0 + 2 + r.nextInt(8); a <= a1 - 2; a += 8 + r.nextInt(12)) {
@@ -849,9 +856,15 @@ final class DistrictLayout {
                 if (W == null) continue;
                 int top = colTopAt(c.seed, W, ax, wallG, a) - 1;
                 if (!c.city) top = c.base + 2 + r.nextInt(Math.max(1, top - c.base - 2));   // 1층: 중간에서 끊김
-                if (top <= c.base + 2) continue;
+                int ok = c.base;
+                for (int y = c.base + 1; y <= top; y++) {
+                    if (!wallSolid(c.seed, W, ax, wallG, a, y, c.base)) break;
+                    ok = y;
+                }
+                if (ok <= c.base + 2) continue;
                 Fx f = new Fx();
-                f.type = 3; f.y = top;
+                f.type = 3; f.y = ok;
+                f.wall = ax ? (side == 0 ? 3 : 2) : (side == 0 ? 1 : 0);
                 if (ax) { f.x0 = f.x1 = g; f.z0 = f.z1 = a; } else { f.z0 = f.z1 = g; f.x0 = f.x1 = a; }
                 out.add(f);
             }
@@ -866,8 +879,10 @@ final class DistrictLayout {
                 int lim = Math.min(colTopAt(c.seed, A, ax, g0 - 1, a), colTopAt(c.seed, B, ax, g1 + 1, a)) - 2;
                 int lo = c.base + 6;
                 if (lim < lo) continue;
+                int wy = lo + r.nextInt(lim - lo + 1);
+                if (!wallSolid(c.seed, A, ax, g0 - 1, a, wy, c.base) || !wallSolid(c.seed, B, ax, g1 + 1, a, wy, c.base)) continue;
                 Fx f = new Fx();
-                f.type = 4; f.y = lo + r.nextInt(lim - lo + 1); f.axis = ax ? 0 : 1;
+                f.type = 4; f.y = wy; f.axis = ax ? 0 : 1;
                 f.r = (int) Math.round(al.gap * (0.6 + 0.6 * r.nextDouble()));   // 처짐(1/10칸)
                 if (ax) { f.x0 = g0; f.x1 = g1; f.z0 = f.z1 = a; } else { f.z0 = g0; f.z1 = g1; f.x0 = f.x1 = a; }
                 out.add(f);
@@ -895,6 +910,13 @@ final class DistrictLayout {
         int[][] n = java.util.Arrays.copyOf(a, a.length + 1);
         n[a.length] = e;
         return n;
+    }
+
+    /** 건물의 이 칸(벽 자리)에 실제로 블록이 서 있는지. */
+    private static boolean wallSolid(long seed, Building W, boolean ax, int g, int a, int y, int base) {
+        if (W == null) return false;
+        int x = ax ? g : a, z = ax ? a : g;
+        return W.block(seed, x, y, z, base - 1) != null;
     }
 
     private static Building sideBuilding(Lot lot, boolean ax, int g, int a) {
@@ -926,7 +948,10 @@ final class DistrictLayout {
                 boolean flange = f.r >= 1 && Math.floorMod(along, 7) == 3;
                 double rr = f.r * f.r + 0.8 * f.r, rf = (f.r + 1) * (f.r + 1) + 0.8 * (f.r + 1);
                 if (d2 <= rr) {
-                    if (f.r == 0) return Fixtures.pipeM(f.axis == 0 ? 0 : 2);            // 가는 배관은 전용 배관 블록
+                    if (f.r == 0) {                                                       // 가는 배관은 전용 배관 블록
+                        if (f.wall >= 0 && Math.floorMod(along, 5) == 2) return Fixtures.clampH(f.wall);
+                        return Fixtures.pipeL(f.axis == 0 ? 0 : 2);
+                    }
                     if (k == 0 && CityLayout.hash01(seed, x * 7 + y, z, 7310) < 0.15) return PIPE_RUST;
                     return f.mat == 0 ? PIPE_A : f.mat == 1 ? PIPE_B : PIPE_C;
                 }
@@ -947,14 +972,16 @@ final class DistrictLayout {
             }
             case 3: {
                 if (x != f.x0 || z != f.z0 || y <= deckTop || y > f.y) return null;
-                return Fixtures.pipeS(1);
+                if (f.wall >= 0 && Math.floorMod(y, 4) == 1 && y > deckTop + 1) return Fixtures.clampV(f.wall);
+                return Fixtures.pipeM(1);
             }
             case 4: {
-                if (!f.covers(x, z)) return null;
-                int g = f.axis == 0 ? x - f.x0 : z - f.z0, n = f.axis == 0 ? f.x1 - f.x0 + 1 : f.z1 - f.z0 + 1;
-                double t = (g + 0.5) / n;
-                int[] w = Fixtures.wireAt(Fixtures.catenary(f.y + 14 / 16.0, f.y + 14 / 16.0, f.r / 10.0, t));
-                return y == w[0] ? Fixtures.wire(f.axis, w[1]) : null;
+                // 전선은 양 끝 벽의 연결점끼리 이어서 그린다(연결점 블록만 놓음)
+                if (!f.covers(x, z) || y != f.y) return null;
+                int g = f.axis == 0 ? x - f.x0 : z - f.z0, n = f.axis == 0 ? f.x1 - f.x0 : f.z1 - f.z0;
+                if (g == 0) return Fixtures.anchor(f.axis == 0 ? 3 : 1);
+                if (g == n) return Fixtures.anchor(f.axis == 0 ? 2 : 0);
+                return null;
             }
             default: {
                 if (x != f.x0 || z != f.z0 || y <= deckTop) return null;
@@ -1307,7 +1334,7 @@ final class DistrictLayout {
                         dc.light = light;
                         if (light == L_STUB) dc.lightH = 1 + CityLayout.rand(seed, x, z, 891, 3);
                     } else {
-                        poleWire(seed, k, ns && dx == ROAD_HALF, x, z, li, lj, ix, jz, nearW, dza <= dzb, dc);
+                        poleWire(p, seed, k, ns && dx == ROAD_HALF, x, z, li, lj, ix, jz, nearW, dza <= dzb, dc);
                     }
                 }
             } else {
@@ -1369,7 +1396,6 @@ final class DistrictLayout {
         if (dc.snowY >= 0) mx = Math.max(mx, dc.snowY);
         if (dc.pole == 1) mx = Math.max(mx, dc.top + Fixtures.POLE_H);
         else if (dc.pole == 2) mx = Math.max(mx, dc.top + dc.poleH);
-        if (dc.wireY != Integer.MIN_VALUE) mx = Math.max(mx, dc.wireY);
         dc.maxY = mx;
         return dc;
     }
@@ -1469,8 +1495,10 @@ final class DistrictLayout {
 
     static final int POLE_STEP = 36;           // 전봇대 간격
 
-    /** 길가 연석 한쪽(가로등 첫째 줄)에 전봇대가 36칸마다 서고, 이웃한 두 전봇대 사이에 전선 두 가닥이 늘어진다. */
-    private static void poleWire(long seed, int k, boolean onNs, int x, int z, int li, int lj, int ix, int jz,
+    private static final ThreadLocal<boolean[]> NO_LINK = ThreadLocal.withInitial(() -> new boolean[1]);
+
+    /** 길가 연석 한쪽(가로등 첫째 줄)에 전봇대가 36칸마다 선다. 서 있는 전봇대는 다음 전봇대와 전선으로 이어진다(연결은 완목 블록이 기억). */
+    private static void poleWire(CityLayout.Params p, long seed, int k, boolean onNs, int x, int z, int li, int lj, int ix, int jz,
                                  boolean westOfLine, boolean northOfLine, Decor dc) {
         boolean first = onNs ? westOfLine : northOfLine;
         if (!first) return;
@@ -1480,24 +1508,47 @@ final class DistrictLayout {
         int off2 = off + 6 + 12 * CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 905 + k, 3);   // 가로등 사이
         int n = Math.floorDiv(along - off2, POLE_STEP);
         int s0 = off2 + n * POLE_STEP, s1 = s0 + POLE_STEP;
-        int p0 = poleKind(seed, k, onNs, lineIdx, s0, ix, jz), p1 = poleKind(seed, k, onNs, lineIdx, s1, ix, jz);
-        int axisArm = onNs ? 0 : 1;                       // 길이 z로 뻗으면 완목은 x 방향
-        if (along == s0) {
-            if (p0 == 0) return;
-            dc.pole = p0;
-            dc.poleAxis = axisArm;
-            if (p0 == 2) dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 6);
-            return;
-        }
-        if (p0 != 1 || p1 != 1) return;
+        if (along != s0) return;
+        int p0 = poleKind(seed, k, onNs, lineIdx, s0, ix, jz);
+        if (p0 == 0) return;
+        dc.pole = p0;
+        dc.poleAxis = onNs ? 0 : 1;                        // 길이 z로 뻗으면 완목은 x 방향
+        if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 8); return; }
+        boolean[] guard = NO_LINK.get();
+        if (guard[0]) return;
+        if (poleKind(seed, k, onNs, lineIdx, s1, ix, jz) != 1) return;
         if (k == 0 && CityLayout.hash01(seed, lineIdx * 7 + (onNs ? 1 : 0), n, 907) < 0.5) return;   // 1층: 끊긴 전선
-        double t = (along - s0) / (double) POLE_STEP;
-        double end = dc.top + Fixtures.POLE_H - 1 + 14 / 16.0;
-        double sagD = k == 0 ? 2.4 : 1.5;
-        int[] w = Fixtures.wireAt(Fixtures.catenary(end, end, sagD, t));
-        dc.wireY = w[0];
-        dc.wireSag = w[1];
-        dc.wireAxis = onNs ? 1 : 0;
+        // 다음 전봇대 자리 찾기(같은 연석 줄, 휘어진 길이면 옆으로 몇 칸 어긋날 수 있음)
+        guard[0] = true;
+        try {
+            for (int d = 0; d <= 4; d++) {
+                for (int sgn : new int[]{1, -1}) {
+                    if (d == 0 && sgn < 0) continue;
+                    int tx = onNs ? x + sgn * d : s1, tz = onNs ? s1 : z + sgn * d;
+                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, tx, tz);
+                    if (l == null) continue;
+                    Decor d2 = decorate(p, seed, k, tx, tz, l);
+                    if (d2 != null && d2.pole == 1) {
+                        dc.wireTo = new int[]{tx, d2.top + Fixtures.POLE_H, tz};
+                        return;
+                    }
+                }
+            }
+        } finally {
+            guard[0] = false;
+        }
+    }
+
+    /** 이 컬럼에서 시작하는 전선 연결 {y, 상대 x, 상대 y, 상대 z} 목록(생성기가 블록 엔티티로 기록). */
+    static java.util.List<int[]> wireLinks(Decor dc, int x, int z) {
+        java.util.ArrayList<int[]> out = new java.util.ArrayList<>(1);
+        if (dc.pole == 1 && dc.wireTo != null) out.add(new int[]{dc.top + Fixtures.POLE_H, dc.wireTo[0], dc.wireTo[1], dc.wireTo[2]});
+        if (dc.st instanceof AlleyCol ac) {
+            for (Fx f : ac.fx) {
+                if (f.type == 4 && x == f.x0 && z == f.z0) out.add(new int[]{f.y, f.x1, f.y, f.z1});
+            }
+        }
+        return out;
     }
 
     /** 이 자리 전봇대: 0 없음, 1 서 있음, 2 부러짐. 교차로 근처에는 없음. */
@@ -1557,7 +1608,6 @@ final class DistrictLayout {
             }
         }
         if (y > dc.top && y <= dc.top + dc.pile) return rubble(seed, x, y, z);
-        if (y == dc.wireY) return Fixtures.wire(dc.wireAxis, dc.wireSag);
         if (dc.pole != 0 && y > dc.top) {
             int rel = y - dc.top;
             if (dc.pole == 2) return rel <= dc.poleH ? Fixtures.pole() : null;

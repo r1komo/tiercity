@@ -5,6 +5,9 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
@@ -30,8 +33,8 @@ public final class FixtureBlocks {
         public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos pos, CollisionContext c) { return SHAPE; }
     }
 
-    /** 전봇대 꼭대기 완목(AXIS: 팔 방향 x/z), 양 끝에 애자. */
-    public static class Crossarm extends Block {
+    /** 전봇대 꼭대기 완목(AXIS: 팔 방향 x/z), 양 끝에 애자. 전선 연결점(블록 엔티티). */
+    public static class Crossarm extends Block implements EntityBlock {
         public static final EnumProperty<Direction.Axis> AXIS = BlockStateProperties.HORIZONTAL_AXIS;
         private static final VoxelShape POST = Block.box(5.5, 0, 5.5, 10.5, 13, 10.5);
         private static final VoxelShape X = Shapes.or(POST, Block.box(0, 11, 6.5, 16, 13, 9.5));
@@ -54,6 +57,69 @@ public final class FixtureBlocks {
         @SuppressWarnings("deprecation")
         public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos pos, CollisionContext c) {
             return s.getValue(AXIS) == Direction.Axis.X ? X : Z;
+        }
+
+        @Override
+        public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { return new WireBlockEntity(pos, state); }
+    }
+
+    /** 건물 벽에 붙은 전선 연결점(FACING: 벽 쪽). */
+    public static class Anchor extends HorizontalDirectionalBlock implements EntityBlock {
+        private static final VoxelShape[] SHAPES = {
+                Block.box(5, 5, 10, 11, 11, 16), Block.box(5, 5, 0, 11, 11, 6), Block.box(10, 5, 5, 16, 11, 11), Block.box(0, 5, 5, 6, 11, 11)};
+
+        public Anchor(Properties p) {
+            super(p);
+            registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+        }
+
+        @Override
+        protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> b) { b.add(FACING); }
+
+        @Override
+        public BlockState getStateForPlacement(BlockPlaceContext c) {
+            return defaultBlockState().setValue(FACING, c.getClickedFace().getOpposite().getAxis().isHorizontal()
+                    ? c.getClickedFace().getOpposite() : c.getHorizontalDirection());
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos pos, CollisionContext c) {
+            switch (s.getValue(FACING)) {
+                case SOUTH: return SHAPES[0];
+                case EAST: return SHAPES[2];
+                case WEST: return SHAPES[3];
+                default: return SHAPES[1];
+            }
+        }
+
+        @Override
+        public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { return new WireBlockEntity(pos, state); }
+    }
+
+    /** 배관 고정 클램프(FACING: 벽 쪽). vertical이면 세로 배관(10픽셀), 아니면 벽을 따라가는 가로 배관(13픽셀). */
+    public static class Clamp extends HorizontalDirectionalBlock {
+        private final boolean vertical;
+
+        public Clamp(Properties p, boolean vertical) {
+            super(p);
+            this.vertical = vertical;
+            registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+        }
+
+        @Override
+        protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> b) { b.add(FACING); }
+
+        @Override
+        public BlockState getStateForPlacement(BlockPlaceContext c) {
+            return defaultBlockState().setValue(FACING, c.getHorizontalDirection());
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos pos, CollisionContext c) {
+            if (vertical) return Block.box(2, 0, 2, 14, 16, 14);
+            return s.getValue(FACING).getAxis() == Direction.Axis.Z ? Block.box(0, 0.5, 0.5, 16, 15.5, 15.5) : Block.box(0.5, 0.5, 0, 15.5, 15.5, 16);
         }
     }
 

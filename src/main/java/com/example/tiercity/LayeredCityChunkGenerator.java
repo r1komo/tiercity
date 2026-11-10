@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.LevelHeightAccessor;
@@ -93,6 +94,19 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                             if (s != null && !s.isAir()) {
                                 chunk.setBlockState(pos.set(wx, y, wz), s, false);
                             }
+                        }
+                    }
+                    // 전선 연결점: 이어진 상대 좌표를 블록 엔티티 자료로 기록
+                    for (DistrictLayout.Decor d : col.decor()) {
+                        if (d == null) continue;
+                        for (int[] link : DistrictLayout.wireLinks(d, wx, wz)) {
+                            CompoundTag tag = new CompoundTag();
+                            tag.putString("id", TierCityMod.MODID + ":wire");
+                            tag.putInt("x", wx);
+                            tag.putInt("y", link[0]);
+                            tag.putInt("z", wz);
+                            tag.putLongArray("Targets", new long[]{BlockPos.asLong(link[1], link[2], link[3])});
+                            chunk.setBlockEntityNbt(tag);
                         }
                     }
                     for (int ry : col.rodY()) {

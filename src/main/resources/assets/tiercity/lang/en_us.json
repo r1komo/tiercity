@@ -27,5 +27,9 @@
   "block.tiercity.pole_crossarm": "Pole Crossarm",
   "block.tiercity.power_line": "Power Line",
   "block.tiercity.pipe_small": "Small Pipe",
-  "block.tiercity.pipe_medium": "Pipe"
+  "block.tiercity.pipe_medium": "Pipe",
+  "block.tiercity.pipe_large": "Large Pipe",
+  "block.tiercity.pipe_clamp_v": "Pipe Clamp (Vertical)",
+  "block.tiercity.pipe_clamp_h": "Pipe Clamp (Horizontal)",
+  "block.tiercity.wire_anchor": "Wire Anchor"
 }

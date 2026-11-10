@@ -1,0 +1,19 @@
+{
+ "variants": {
+  "facing=north": {
+   "model": "tiercity:block/pipe_clamp_h"
+  },
+  "facing=east": {
+   "model": "tiercity:block/pipe_clamp_h",
+   "y": 90
+  },
+  "facing=south": {
+   "model": "tiercity:block/pipe_clamp_h",
+   "y": 180
+  },
+  "facing=west": {
+   "model": "tiercity:block/pipe_clamp_h",
+   "y": 270
+  }
+ }
+}

@@ -13,9 +13,11 @@ final class Fixtures {
     static volatile BlockState pole = null;
     static volatile BlockState[] crossarm = null;        // [0] 팔이 x 방향, [1] 팔이 z 방향
     static volatile BlockState[][] wire = null;          // [축 0 x, 1 z][처짐 0..4]
-    static volatile BlockState[] pipeS = null, pipeM = null;   // [0 x, 1 y, 2 z]
+    static volatile BlockState[] pipeS = null, pipeM = null, pipeL = null;   // [0 x, 1 y, 2 z]
+    /** 방향 번호(벽 쪽): 0 남(+z), 1 북(-z), 2 동(+x), 3 서(-x). */
+    static volatile BlockState[] clampV = null, clampH = null, anchor = null;
 
-    static final int POLE_H = 13;                         // 기둥 12칸 + 완목
+    static final int POLE_H = 18;                         // 기둥 17칸 + 완목
     static final int SAG_LEVELS = 5;
 
     static BlockState pole() { BlockState s = pole; return s != null ? s : Blocks.ANDESITE_WALL.defaultBlockState(); }
@@ -25,6 +27,17 @@ final class Fixtures {
     static BlockState wire(int axis, int sag) { BlockState[][] a = wire; return a != null ? a[axis][sag] : Blocks.CHAIN.defaultBlockState(); }
 
     static BlockState pipeS(int axis) { BlockState[] a = pipeS; return a != null ? a[axis] : Blocks.IRON_BARS.defaultBlockState(); }
+
+    static BlockState pipeL(int axis) { BlockState[] a = pipeL; return a != null ? a[axis] : Blocks.POLISHED_ANDESITE.defaultBlockState(); }
+
+    static BlockState clampV(int dir) { BlockState[] a = clampV; return a != null ? a[dir] : Blocks.SMOOTH_STONE.defaultBlockState(); }
+
+    static BlockState clampH(int dir) { BlockState[] a = clampH; return a != null ? a[dir] : Blocks.SMOOTH_STONE.defaultBlockState(); }
+
+    static BlockState anchor(int dir) { BlockState[] a = anchor; return a != null ? a[dir] : Blocks.LIGHTNING_ROD.defaultBlockState(); }
+
+    /** 벽이 (dx, dz) 쪽에 있을 때의 방향 번호. */
+    static int dirTo(int dx, int dz) { return dz > 0 ? 0 : dz < 0 ? 1 : dx > 0 ? 2 : 3; }
 
     static BlockState pipeM(int axis) { BlockState[] a = pipeM; return a != null ? a[axis] : Blocks.POLISHED_ANDESITE.defaultBlockState(); }
 
