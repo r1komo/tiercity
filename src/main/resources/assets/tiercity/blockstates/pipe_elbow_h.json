@@ -1,0 +1,34 @@
+{
+ "variants": {
+  "facing=north,flip=false": {
+   "model": "tiercity:block/pipe_elbow_h"
+  },
+  "facing=north,flip=true": {
+   "model": "tiercity:block/pipe_elbow_h_flip"
+  },
+  "facing=east,flip=false": {
+   "model": "tiercity:block/pipe_elbow_h",
+   "y": 90
+  },
+  "facing=east,flip=true": {
+   "model": "tiercity:block/pipe_elbow_h_flip",
+   "y": 90
+  },
+  "facing=south,flip=false": {
+   "model": "tiercity:block/pipe_elbow_h",
+   "y": 180
+  },
+  "facing=south,flip=true": {
+   "model": "tiercity:block/pipe_elbow_h_flip",
+   "y": 180
+  },
+  "facing=west,flip=false": {
+   "model": "tiercity:block/pipe_elbow_h",
+   "y": 270
+  },
+  "facing=west,flip=true": {
+   "model": "tiercity:block/pipe_elbow_h_flip",
+   "y": 270
+  }
+ }
+}

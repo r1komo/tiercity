@@ -48,7 +48,7 @@ import java.util.Set;
  */
 @Mod.EventBusSubscriber(modid = TierCityMod.MODID, value = Dist.CLIENT)
 public final class SkyWindowRenderer {
-    private record Mesh(VertexBuffer vbo, int minY, int maxY) {}
+    private record Mesh(VertexBuffer vbo, int minY, int maxY, long sig) {}
 
     private static final Map<Long, Mesh> MESHES = new HashMap<>();
     private static final Set<Long> LOADED = new LinkedHashSet<>();
@@ -176,11 +176,8 @@ public final class SkyWindowRenderer {
     }
 
     private static void rebuild(ClientLevel level, long key) {
-        Mesh old = MESHES.remove(key);
-        if (old != null) old.vbo().close();
-
         LevelChunk chunk = level.getChunkSource().getChunk(ChunkPos.getX(key), ChunkPos.getZ(key), false);
-        if (chunk == null) return;
+        if (chunk == null) { drop(key); return; }
         Block panel = TierCityMod.SKY_PANEL.get();
 
         Map<Integer, boolean[]> planes = new HashMap<>();
@@ -204,7 +201,17 @@ public final class SkyWindowRenderer {
                 }
             }
         }
-        if (planes.isEmpty()) return;
+        if (planes.isEmpty()) { drop(key); return; }
+        // 내용이 그대로면 다시 만들지 않음(순환 재검사 때 GPU 버퍼를 계속 새로 만들던 것 방지)
+        long sig = 1469598103934665603L;
+        for (Map.Entry<Integer, boolean[]> e : new java.util.TreeMap<>(planes).entrySet()) {
+            sig = (sig ^ e.getKey()) * 1099511628211L;
+            boolean[] b = e.getValue();
+            for (int i = 0; i < b.length; i++) if (b[i]) sig = (sig ^ (i + 1)) * 1099511628211L;
+        }
+        Mesh cur = MESHES.get(key);
+        if (cur != null && cur.sig() == sig) return;
+        drop(key);
 
         int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
         BUILDER.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION);
@@ -232,6 +239,11 @@ public final class SkyWindowRenderer {
         vbo.bind();
         vbo.upload(rendered);
         VertexBuffer.unbind();
-        MESHES.put(key, new Mesh(vbo, minY, maxY));
+        MESHES.put(key, new Mesh(vbo, minY, maxY, sig));
+    }
+
+    private static void drop(long key) {
+        Mesh old = MESHES.remove(key);
+        if (old != null) old.vbo().close();
     }
 }

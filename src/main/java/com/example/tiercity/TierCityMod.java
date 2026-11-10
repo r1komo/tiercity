@@ -71,6 +71,8 @@ public class TierCityMod {
     public static final RegistryObject<Block> PIPE_LARGE = BLOCKS.register("pipe_large", () -> new FixtureBlocks.Pipe(fixtureProps(MapColor.METAL).noOcclusion(), 13));
     public static final RegistryObject<Block> PIPE_CLAMP_V = BLOCKS.register("pipe_clamp_v", () -> new FixtureBlocks.Clamp(fixtureProps(MapColor.METAL).noOcclusion(), true));
     public static final RegistryObject<Block> PIPE_CLAMP_H = BLOCKS.register("pipe_clamp_h", () -> new FixtureBlocks.Clamp(fixtureProps(MapColor.METAL).noOcclusion(), false));
+    public static final RegistryObject<Block> PIPE_ELBOW_V = BLOCKS.register("pipe_elbow_v", () -> new FixtureBlocks.Elbow(fixtureProps(MapColor.METAL).noOcclusion(), false));
+    public static final RegistryObject<Block> PIPE_ELBOW_H = BLOCKS.register("pipe_elbow_h", () -> new FixtureBlocks.Elbow(fixtureProps(MapColor.METAL).noOcclusion(), true));
     public static final RegistryObject<Block> WIRE_ANCHOR = BLOCKS.register("wire_anchor", () -> new FixtureBlocks.Anchor(fixtureProps(MapColor.STONE).noOcclusion()));
 
     public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(Registries.BLOCK_ENTITY_TYPE, MODID);
@@ -145,6 +147,13 @@ public class TierCityMod {
         Fixtures.clampV = faced(PIPE_CLAMP_V.get(), dirs);
         Fixtures.clampH = faced(PIPE_CLAMP_H.get(), dirs);
         Fixtures.anchor = faced(WIRE_ANCHOR.get(), dirs);
+        Fixtures.elbowV = faced(PIPE_ELBOW_V.get(), dirs);
+        BlockState[][] eh = new BlockState[4][2];
+        for (int i = 0; i < 4; i++) for (int f = 0; f < 2; f++) {
+            eh[i][f] = PIPE_ELBOW_H.get().defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, dirs[i])
+                    .setValue(FixtureBlocks.Elbow.FLIP, f == 1);
+        }
+        Fixtures.elbowH = eh;
         Landmarks.metalPlant = Blocks.IRON_BARS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true);
         Landmarks.statueFace = faced(STATUE_FACE.get(), dirs);
     }

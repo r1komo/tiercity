@@ -322,7 +322,7 @@ public final class CityLayout {
                 && hash01(seed, i, j, 18 + 1000 * (k + 1)) < 0.85) {
             r = 0;
         }
-        if (cache.size() > 40000) cache.clear();
+        if (cache.size() > 16000) cache.clear();
         cache.put(key, (byte) r);
         return r;
     }

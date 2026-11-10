@@ -69,62 +69,108 @@ public class WireRenderer implements BlockEntityRenderer<WireBlockEntity> {
         return out;
     }
 
+    /** 전선 모양은 한 번 계산해 둔다(매 프레임 새로 만들지 않음). 상대 쪽 청크가 아직 없으면 다음에 다시 계산. */
+    private static final class Geo {
+        float[] verts;          // 사각형마다 꼭짓점 4개 x (x, y, z), 블록 기준 상대 좌표
+        long[] lightAt;         // 사각형마다 밝기를 읽을 칸
+        boolean complete;
+        long[] targets;
+    }
+
+    private static final java.util.WeakHashMap<WireBlockEntity, Geo> CACHE = new java.util.WeakHashMap<>();
+    private static final BlockPos.MutableBlockPos MPOS = new BlockPos.MutableBlockPos();
+
     @Override
     public void render(WireBlockEntity be, float partialTick, PoseStack pose, MultiBufferSource buffers, int light, int overlay) {
         Level level = be.getLevel();
         if (level == null || be.targets().length == 0) return;
-        BlockPos pos = be.getBlockPos();
-        List<Vec3> mine = points(be.getBlockState(), pos);
+        Geo g = CACHE.get(be);
+        if (g == null || !g.complete || g.targets != be.targets()) {
+            g = build(level, be);
+            CACHE.put(be, g);
+        }
         VertexConsumer vc = buffers.getBuffer(RenderType.entityCutoutNoCull(TEX));
         Matrix4f m = pose.last().pose();
         Matrix3f n = pose.last().normal();
+        float[] v = g.verts;
+        for (int q = 0; q < g.lightAt.length; q++) {
+            int li = LevelRenderer.getLightColor(level, MPOS.set(g.lightAt[q]));
+            int o = q * 12;
+            vtx(vc, m, n, v[o], v[o + 1], v[o + 2], 0, 0, li);
+            vtx(vc, m, n, v[o + 3], v[o + 4], v[o + 5], 1, 0, li);
+            vtx(vc, m, n, v[o + 6], v[o + 7], v[o + 8], 1, 1, li);
+            vtx(vc, m, n, v[o + 9], v[o + 10], v[o + 11], 0, 1, li);
+        }
+    }
+
+    private static Geo build(Level level, WireBlockEntity be) {
+        Geo g = new Geo();
+        g.targets = be.targets();
+        g.complete = true;
+        BlockPos pos = be.getBlockPos();
+        List<Vec3> mine = points(be.getBlockState(), pos);
+        java.util.ArrayList<float[]> quads = new java.util.ArrayList<>();
+        java.util.ArrayList<Long> lights = new java.util.ArrayList<>();
         for (long t : be.targets()) {
             BlockPos tp = BlockPos.of(t);
-            List<Vec3> theirs = level.isLoaded(tp) ? points(level.getBlockState(tp), tp) : List.of(Vec3.atCenterOf(tp));
-            // 가닥끼리 꼬이지 않게: 전선 방향에 수직인 축 위치 순서로 짝지음
+            List<Vec3> theirs;
+            if (level.isLoaded(tp)) theirs = points(level.getBlockState(tp), tp);
+            else { theirs = List.of(Vec3.atCenterOf(tp)); g.complete = false; }
             Vec3 span = Vec3.atCenterOf(tp).subtract(Vec3.atCenterOf(pos));
             Vec3 side = new Vec3(-span.z, 0, span.x);
             mine.sort((a, b) -> Double.compare(a.dot(side), b.dot(side)));
             List<Vec3> th = new ArrayList<>(theirs);
             th.sort((a, b) -> Double.compare(a.dot(side), b.dot(side)));
-            for (int i = 0; i < mine.size(); i++) {
-                Vec3 a = mine.get(i), b = th.get(Math.min(i, th.size() - 1));
-                cable(level, vc, m, n, pos, a, b);
-            }
+            for (int i = 0; i < mine.size(); i++) cable(quads, lights, pos, mine.get(i), th.get(Math.min(i, th.size() - 1)));
         }
+        g.verts = new float[quads.size() * 12];
+        g.lightAt = new long[quads.size()];
+        for (int i = 0; i < quads.size(); i++) {
+            System.arraycopy(quads.get(i), 0, g.verts, i * 12, 12);
+            g.lightAt[i] = lights.get(i);
+        }
+        return g;
     }
 
-    private static void cable(Level level, VertexConsumer vc, Matrix4f m, Matrix3f n, BlockPos origin, Vec3 a, Vec3 b) {
+    private static void cable(List<float[]> quads, List<Long> lights, BlockPos origin, Vec3 a, Vec3 b) {
         double hl = Math.sqrt((b.x - a.x) * (b.x - a.x) + (b.z - a.z) * (b.z - a.z));
-        double sag = 0.025 * hl + 0.12;
+        // 처짐: 길이에 비례 + 전선마다 0.7~1.4배 난수(양 끝 위치로 정해서 늘 같음)
+        long h = Double.doubleToLongBits(a.x * 31.7 + a.z * 7.3 + b.x * 3.1 + b.z * 13.9 + a.y * 0.37);
+        h ^= h >>> 33; h *= 0xff51afd7ed558ccdL; h ^= h >>> 33;
+        double rnd = 0.7 + 0.7 * ((h >>> 11) * 0x1.0p-53);
+        double sag = (0.04 * hl + 0.2) * rnd;
         Vec3 prev = null;
         for (int i = 0; i <= SEGS; i++) {
             double t = i / (double) SEGS;
             Vec3 p = new Vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t - sag * 4 * t * (1 - t), a.z + (b.z - a.z) * t);
             if (prev != null) {
-                int li = LevelRenderer.getLightColor(level, BlockPos.containing(prev.add(p).scale(0.5)));
+                long lp = BlockPos.containing(prev.add(p).scale(0.5)).asLong();
                 Vec3 d = p.subtract(prev).normalize();
                 Vec3 s = d.cross(new Vec3(0, 1, 0));
                 if (s.lengthSqr() < 1e-6) s = new Vec3(1, 0, 0);
                 s = s.normalize().scale(W);
                 Vec3 u = s.cross(d).normalize().scale(W);
-                quad(vc, m, n, origin, prev.add(s), prev.subtract(s), p.subtract(s), p.add(s), li);
-                quad(vc, m, n, origin, prev.add(u), prev.subtract(u), p.subtract(u), p.add(u), li);
+                quads.add(q(origin, prev.add(s), prev.subtract(s), p.subtract(s), p.add(s)));
+                lights.add(lp);
+                quads.add(q(origin, prev.add(u), prev.subtract(u), p.subtract(u), p.add(u)));
+                lights.add(lp);
             }
             prev = p;
         }
     }
 
-    private static void quad(VertexConsumer vc, Matrix4f m, Matrix3f n, BlockPos o, Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, int light) {
-        v(vc, m, n, o, p0, 0, 0, light);
-        v(vc, m, n, o, p1, 1, 0, light);
-        v(vc, m, n, o, p2, 1, 1, light);
-        v(vc, m, n, o, p3, 0, 1, light);
+    private static float[] q(BlockPos o, Vec3... ps) {
+        float[] f = new float[12];
+        for (int i = 0; i < 4; i++) {
+            f[i * 3] = (float) (ps[i].x - o.getX());
+            f[i * 3 + 1] = (float) (ps[i].y - o.getY());
+            f[i * 3 + 2] = (float) (ps[i].z - o.getZ());
+        }
+        return f;
     }
 
-    private static void v(VertexConsumer vc, Matrix4f m, Matrix3f n, BlockPos o, Vec3 p, float u, float vv, int light) {
-        vc.vertex(m, (float) (p.x - o.getX()), (float) (p.y - o.getY()), (float) (p.z - o.getZ()))
-                .color(255, 255, 255, 255).uv(u, vv).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light)
+    private static void vtx(VertexConsumer vc, Matrix4f m, Matrix3f n, float x, float y, float z, float u, float vv, int light) {
+        vc.vertex(m, x, y, z).color(255, 255, 255, 255).uv(u, vv).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light)
                 .normal(n, 0, 1, 0).endVertex();
     }
 }

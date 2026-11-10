@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.phys.shapes.CollisionContext;
@@ -95,6 +96,37 @@ public final class FixtureBlocks {
 
         @Override
         public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { return new WireBlockEntity(pos, state); }
+    }
+
+    /** 꺾인 배관(FACING: 벽 쪽). FLIP이 있으면 가로 엘보(벽을 따라오다 벽으로), 없으면 세로 엘보(아래에서 올라와 벽으로). */
+    public static class Elbow extends HorizontalDirectionalBlock {
+        public static final BooleanProperty FLIP = BooleanProperty.create("flip");
+        private final boolean horizontal;
+
+        public Elbow(Properties p, boolean horizontal) {
+            super(p);
+            this.horizontal = horizontal;
+            BlockState d = stateDefinition.any().setValue(FACING, Direction.NORTH);
+            if (horizontal) d = d.setValue(FLIP, false);
+            registerDefaultState(d);
+        }
+
+        @Override
+        protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> b) {
+            b.add(FACING);
+            b.add(FLIP);
+        }
+
+        @Override
+        public BlockState getStateForPlacement(BlockPlaceContext c) {
+            return defaultBlockState().setValue(FACING, c.getHorizontalDirection());
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos pos, CollisionContext c) {
+            return horizontal ? Block.box(1, 1, 1, 15, 15, 15) : Block.box(2, 0, 2, 14, 14, 14);
+        }
     }
 
     /** 배관 고정 클램프(FACING: 벽 쪽). vertical이면 세로 배관(10픽셀), 아니면 벽을 따라가는 가로 배관(13픽셀). */

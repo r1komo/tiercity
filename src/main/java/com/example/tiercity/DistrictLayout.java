@@ -81,7 +81,8 @@ final class DistrictLayout {
         int pole;            // 전봇대: 0 없음, 1 서 있음, 2 부러짐
         int poleH;           // 부러진 전봇대 높이
         int poleAxis;        // 완목 방향(0 x, 1 z)
-        int[] wireTo;        // 서 있는 전봇대: 전선이 이어지는 다음 전봇대 완목 좌표
+        int poleSide, poleArms, poleX, poleZ;
+        int[][] armTo;       // 완목마다 전선이 이어지는 상대 완목 좌표(없으면 null)
 
         boolean blocksStanding() { return st != null || light != L_NONE || pole != 0; }
 
@@ -406,7 +407,7 @@ final class DistrictLayout {
         Lot cached = cache.get(key);
         if (cached != null) return cached;
         Lot lot = buildLot(p, seed, k, ix, jz);
-        if (cache.size() > 2048) cache.clear();
+        if (cache.size() > 384) cache.clear();          // 스레드마다 캐시가 따로 있어 작게(구획 하나 약 30~50KB)
         cache.put(key, lot);
         return lot;
     }
@@ -805,6 +806,7 @@ final class DistrictLayout {
                 for (int a = s0; a <= s1 && ok; a += 3) {
                     if (!wallSolid(c.seed, sideBuilding(lot, ax, wallG, a), ax, wallG, a, y, c.base)) ok = false;
                 }
+                if (ok && !wallSolid(c.seed, sideBuilding(lot, ax, wallG, s1), ax, wallG, s1, y, c.base)) ok = false;   // 꺾여 들어가는 끝
                 if (!ok) continue;
                 Fx f = new Fx();
                 f.type = 0; f.axis = ax ? 1 : 0; f.r = 0; f.mat = r.nextInt(3); f.y = y;
@@ -949,6 +951,10 @@ final class DistrictLayout {
                 double rr = f.r * f.r + 0.8 * f.r, rf = (f.r + 1) * (f.r + 1) + 0.8 * (f.r + 1);
                 if (d2 <= rr) {
                     if (f.r == 0) {                                                       // 가는 배관은 전용 배관 블록
+                        if (f.wall >= 0 && (along == lo || along == hi)) {                // 끝: 벽으로 꺾여 들어감
+                            int s1 = along == lo ? 1 : -1;
+                            return Fixtures.elbowH(f.wall, f.axis == 0 ? s1 : 0, f.axis == 0 ? 0 : s1);
+                        }
                         if (f.wall >= 0 && Math.floorMod(along, 5) == 2) return Fixtures.clampH(f.wall);
                         return Fixtures.pipeL(f.axis == 0 ? 0 : 2);
                     }
@@ -972,6 +978,7 @@ final class DistrictLayout {
             }
             case 3: {
                 if (x != f.x0 || z != f.z0 || y <= deckTop || y > f.y) return null;
+                if (f.wall >= 0 && y == f.y) return Fixtures.elbowV(f.wall);                   // 맨 위: 벽으로 꺾여 들어감
                 if (f.wall >= 0 && Math.floorMod(y, 4) == 1 && y > deckTop + 1) return Fixtures.clampV(f.wall);
                 return Fixtures.pipeM(1);
             }
@@ -1476,7 +1483,7 @@ final class DistrictLayout {
                 m = n;
             }
         }
-        if (cache.size() > 4096) cache.clear();
+        if (cache.size() > 1024) cache.clear();
         cache.put(key, m);
         return m == NO_MONO ? null : m;
     }
@@ -1497,52 +1504,77 @@ final class DistrictLayout {
 
     private static final ThreadLocal<boolean[]> NO_LINK = ThreadLocal.withInitial(() -> new boolean[1]);
 
-    /** 길가 연석 한쪽(가로등 첫째 줄)에 전봇대가 36칸마다 선다. 서 있는 전봇대는 다음 전봇대와 전선으로 이어진다(연결은 완목 블록이 기억). */
+    /**
+     * 길 양쪽 연석에 전봇대가 36칸마다(반대쪽은 18칸 어긋나게) 선다. 전봇대마다 완목 4~6개.
+     * 짝수 번째 완목은 같은 줄 다음 전봇대로, 홀수 번째 완목은 길 건너 비스듬히 앞 전봇대로 전선이 이어져 X자로 엇갈린다.
+     */
     private static void poleWire(CityLayout.Params p, long seed, int k, boolean onNs, int x, int z, int li, int lj, int ix, int jz,
                                  boolean westOfLine, boolean northOfLine, Decor dc) {
         boolean first = onNs ? westOfLine : northOfLine;
-        if (!first) return;
+        int side = first ? 0 : 1;
         int along = onNs ? z : x;
         int lineIdx = onNs ? li : lj;
         int off = CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 895 + k, LIGHT_STEP);
-        int off2 = off + 6 + 12 * CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 905 + k, 3);   // 가로등 사이
-        int n = Math.floorDiv(along - off2, POLE_STEP);
-        int s0 = off2 + n * POLE_STEP, s1 = s0 + POLE_STEP;
-        if (along != s0) return;
-        int p0 = poleKind(seed, k, onNs, lineIdx, s0, ix, jz);
+        int base = off + 6 + 12 * CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 905 + k, 3) + side * (POLE_STEP / 2);   // 가로등 사이
+        if (Math.floorMod(along - base, POLE_STEP) != 0) return;
+        int p0 = poleKind(seed, k, onNs, lineIdx, along, side, ix, jz);
         if (p0 == 0) return;
         dc.pole = p0;
+        dc.poleSide = side;
         dc.poleAxis = onNs ? 0 : 1;                        // 길이 z로 뻗으면 완목은 x 방향
-        if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 8); return; }
+        if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 10); return; }
+        dc.poleArms = 4 + CityLayout.rand(seed, x, z, 909, 3);
         boolean[] guard = NO_LINK.get();
         if (guard[0]) return;
-        if (poleKind(seed, k, onNs, lineIdx, s1, ix, jz) != 1) return;
-        if (k == 0 && CityLayout.hash01(seed, lineIdx * 7 + (onNs ? 1 : 0), n, 907) < 0.5) return;   // 1층: 끊긴 전선
-        // 다음 전봇대 자리 찾기(같은 연석 줄, 휘어진 길이면 옆으로 몇 칸 어긋날 수 있음)
         guard[0] = true;
         try {
-            for (int d = 0; d <= 4; d++) {
-                for (int sgn : new int[]{1, -1}) {
-                    if (d == 0 && sgn < 0) continue;
-                    int tx = onNs ? x + sgn * d : s1, tz = onNs ? s1 : z + sgn * d;
-                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, tx, tz);
-                    if (l == null) continue;
-                    Decor d2 = decorate(p, seed, k, tx, tz, l);
-                    if (d2 != null && d2.pole == 1) {
-                        dc.wireTo = new int[]{tx, d2.top + Fixtures.POLE_H, tz};
-                        return;
-                    }
-                }
+            Decor same = findPole(p, seed, k, onNs, x, z, along + POLE_STEP, side, false);
+            Decor diag = findPole(p, seed, k, onNs, x, z, along + POLE_STEP / 2, 1 - side, true);
+            dc.armTo = new int[dc.poleArms][];
+            for (int i = 0; i < dc.poleArms; i++) {
+                Decor t = (i % 2 == 0) ? same : diag;
+                if (t == null) continue;
+                if (k == 0 && CityLayout.hash01(seed, x * 31 + i, z, 907) < 0.5) continue;   // 1층: 끊긴 전선
+                int ti = Math.min(i, t.poleArms - 1);
+                dc.armTo[i] = new int[]{t.poleX, t.top + Fixtures.POLE_H - 2 * ti, t.poleZ};
             }
         } finally {
             guard[0] = false;
         }
     }
 
+    /** along 위치의 side쪽 연석에서 서 있는 전봇대를 찾는다(휘어진 길이면 옆으로 조금 어긋날 수 있음). */
+    private static Decor findPole(CityLayout.Params p, long seed, int k, boolean onNs, int x, int z, int along, int side, boolean across) {
+        int[] centers = across ? new int[]{2 * ROAD_HALF, -2 * ROAD_HALF} : new int[]{0};
+        for (int c : centers) {
+            for (int d = 0; d <= 3; d++) {
+                for (int sgn : new int[]{1, -1}) {
+                    if (d == 0 && sgn < 0) continue;
+                    int lat = c + sgn * d;
+                    int tx = onNs ? x + lat : along, tz = onNs ? along : z + lat;
+                    CityLayout.Layer l = CityLayout.baseLayer(p, seed, k, tx, tz);
+                    if (l == null) continue;
+                    Decor d2 = decorate(p, seed, k, tx, tz, l);
+                    if (d2 != null && d2.pole == 1 && d2.poleSide == side) {
+                        d2.poleX = tx;
+                        d2.poleZ = tz;
+                        return d2;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     /** 이 컬럼에서 시작하는 전선 연결 {y, 상대 x, 상대 y, 상대 z} 목록(생성기가 블록 엔티티로 기록). */
     static java.util.List<int[]> wireLinks(Decor dc, int x, int z) {
         java.util.ArrayList<int[]> out = new java.util.ArrayList<>(1);
-        if (dc.pole == 1 && dc.wireTo != null) out.add(new int[]{dc.top + Fixtures.POLE_H, dc.wireTo[0], dc.wireTo[1], dc.wireTo[2]});
+        if (dc.pole == 1 && dc.armTo != null) {
+            for (int i = 0; i < dc.armTo.length; i++) {
+                int[] t = dc.armTo[i];
+                if (t != null) out.add(new int[]{dc.top + Fixtures.POLE_H - 2 * i, t[0], t[1], t[2]});
+            }
+        }
         if (dc.st instanceof AlleyCol ac) {
             for (Fx f : ac.fx) {
                 if (f.type == 4 && x == f.x0 && z == f.z0) out.add(new int[]{f.y, f.x1, f.y, f.z1});
@@ -1552,12 +1584,12 @@ final class DistrictLayout {
     }
 
     /** 이 자리 전봇대: 0 없음, 1 서 있음, 2 부러짐. 교차로 근처에는 없음. */
-    private static int poleKind(long seed, int k, boolean onNs, int lineIdx, int along, int ix, int jz) {
+    private static int poleKind(long seed, int k, boolean onNs, int lineIdx, int along, int side, int ix, int jz) {
         for (int j = -1; j <= 2; j++) {
             int cross = onNs ? lineZ(seed, k, jz + j) : lineX(seed, k, ix + j);
             if (Math.abs(along - cross) <= ROAD_HALF + 4) return 0;
         }
-        double r = CityLayout.hash01(seed, lineIdx * 131 + (onNs ? 1 : 0), along, 908 + k);
+        double r = CityLayout.hash01(seed, lineIdx * 131 + (onNs ? 1 : 0) + side * 7, along, 908 + k);
         if (k == 0) return r < 0.35 ? 0 : r < 0.6 ? 2 : 1;
         return r < 0.03 ? 0 : 1;
     }
@@ -1611,9 +1643,10 @@ final class DistrictLayout {
         if (dc.pole != 0 && y > dc.top) {
             int rel = y - dc.top;
             if (dc.pole == 2) return rel <= dc.poleH ? Fixtures.pole() : null;
-            if (rel < Fixtures.POLE_H) return Fixtures.pole();
-            if (rel == Fixtures.POLE_H) return Fixtures.crossarm(dc.poleAxis);
-            return null;
+            if (rel > Fixtures.POLE_H) return null;
+            int fromTop = Fixtures.POLE_H - rel;
+            if (fromTop % 2 == 0 && fromTop / 2 < Math.max(1, dc.poleArms)) return Fixtures.crossarm(dc.poleAxis);
+            return Fixtures.pole();
         }
         if (dc.light != L_NONE && y > dc.top) {
             int rel = y - dc.top;

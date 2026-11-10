@@ -15,9 +15,10 @@ final class Fixtures {
     static volatile BlockState[][] wire = null;          // [축 0 x, 1 z][처짐 0..4]
     static volatile BlockState[] pipeS = null, pipeM = null, pipeL = null;   // [0 x, 1 y, 2 z]
     /** 방향 번호(벽 쪽): 0 남(+z), 1 북(-z), 2 동(+x), 3 서(-x). */
-    static volatile BlockState[] clampV = null, clampH = null, anchor = null;
+    static volatile BlockState[] clampV = null, clampH = null, anchor = null, elbowV = null;
+    static volatile BlockState[][] elbowH = null;          // [벽 방향][0 오른쪽에서 옴, 1 왼쪽에서 옴]
 
-    static final int POLE_H = 18;                         // 기둥 17칸 + 완목
+    static final int POLE_H = 24;                         // 꼭대기 완목 높이(완목은 여기서 2칸 간격으로 4~6개)
     static final int SAG_LEVELS = 5;
 
     static BlockState pole() { BlockState s = pole; return s != null ? s : Blocks.ANDESITE_WALL.defaultBlockState(); }
@@ -33,6 +34,23 @@ final class Fixtures {
     static BlockState clampV(int dir) { BlockState[] a = clampV; return a != null ? a[dir] : Blocks.SMOOTH_STONE.defaultBlockState(); }
 
     static BlockState clampH(int dir) { BlockState[] a = clampH; return a != null ? a[dir] : Blocks.SMOOTH_STONE.defaultBlockState(); }
+
+    static BlockState elbowV(int dir) { BlockState[] a = elbowV; return a != null ? a[dir] : Blocks.POLISHED_ANDESITE.defaultBlockState(); }
+
+    /** 벽을 따라가던 배관이 벽으로 꺾여 들어가는 끝. (dx, dz)는 이 칸에서 배관이 이어지는 쪽. */
+    static BlockState elbowH(int wallDir, int dx, int dz) {
+        BlockState[][] a = elbowH;
+        if (a == null) return Blocks.POLISHED_ANDESITE.defaultBlockState();
+        // 모델(벽이 북쪽)에서 배관은 동쪽(+x)에서 옴. 벽 방향별로 돌린 '기본 방향'
+        int nx, nz;
+        switch (wallDir) {
+            case 1: nx = 1; nz = 0; break;    // 북
+            case 2: nx = 0; nz = 1; break;    // 동
+            case 0: nx = -1; nz = 0; break;   // 남
+            default: nx = 0; nz = -1;         // 서
+        }
+        return a[wallDir][(dx == nx && dz == nz) ? 0 : 1];
+    }
 
     static BlockState anchor(int dir) { BlockState[] a = anchor; return a != null ? a[dir] : Blocks.LIGHTNING_ROD.defaultBlockState(); }
 

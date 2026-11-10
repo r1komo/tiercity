@@ -226,7 +226,7 @@ final class Landmarks {
         Site c = cache.get(key);
         if (c == null) {
             c = buildSite(p, seed, k, i, j);
-            if (cache.size() > 2048) cache.clear();
+            if (cache.size() > 512) cache.clear();
             cache.put(key, c == null ? NO_SITE : c);
         }
         return c == NO_SITE ? null : c;

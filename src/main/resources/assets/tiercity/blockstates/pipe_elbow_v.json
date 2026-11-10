@@ -1,0 +1,19 @@
+{
+ "variants": {
+  "facing=north": {
+   "model": "tiercity:block/pipe_elbow_v"
+  },
+  "facing=east": {
+   "model": "tiercity:block/pipe_elbow_v",
+   "y": 90
+  },
+  "facing=south": {
+   "model": "tiercity:block/pipe_elbow_v",
+   "y": 180
+  },
+  "facing=west": {
+   "model": "tiercity:block/pipe_elbow_v",
+   "y": 270
+  }
+ }
+}

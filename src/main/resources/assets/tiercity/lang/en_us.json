@@ -31,5 +31,7 @@
   "block.tiercity.pipe_large": "Large Pipe",
   "block.tiercity.pipe_clamp_v": "Pipe Clamp (Vertical)",
   "block.tiercity.pipe_clamp_h": "Pipe Clamp (Horizontal)",
-  "block.tiercity.wire_anchor": "Wire Anchor"
+  "block.tiercity.wire_anchor": "Wire Anchor",
+  "block.tiercity.pipe_elbow_v": "Pipe Elbow (Vertical)",
+  "block.tiercity.pipe_elbow_h": "Pipe Elbow (Horizontal)"
 }
