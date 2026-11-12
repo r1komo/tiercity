@@ -33,5 +33,15 @@
   "block.tiercity.pipe_clamp_h": "Pipe Clamp (Horizontal)",
   "block.tiercity.wire_anchor": "Wire Anchor",
   "block.tiercity.pipe_elbow_v": "Pipe Elbow (Vertical)",
-  "block.tiercity.pipe_elbow_h": "Pipe Elbow (Horizontal)"
+  "block.tiercity.pipe_elbow_h": "Pipe Elbow (Horizontal)",
+  "tiercity.wind.msg": "It feels like a breeze is coming from %s.",
+  "tiercity.wind.front": "ahead",
+  "tiercity.wind.front_right": "ahead to the right",
+  "tiercity.wind.right": "the right",
+  "tiercity.wind.back_right": "behind to the right",
+  "tiercity.wind.back": "behind",
+  "tiercity.wind.back_left": "behind to the left",
+  "tiercity.wind.left": "the left",
+  "tiercity.wind.front_left": "ahead to the left",
+  "tiercity.wind.above": "somewhere above"
 }

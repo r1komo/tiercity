@@ -33,5 +33,15 @@
   "block.tiercity.pipe_clamp_h": "배관 클램프(가로)",
   "block.tiercity.wire_anchor": "전선 연결점",
   "block.tiercity.pipe_elbow_v": "꺾인 배관(세로)",
-  "block.tiercity.pipe_elbow_h": "꺾인 배관(가로)"
+  "block.tiercity.pipe_elbow_h": "꺾인 배관(가로)",
+  "tiercity.wind.msg": "%s에서 바람이 불어오는 것 같다.",
+  "tiercity.wind.front": "앞쪽",
+  "tiercity.wind.front_right": "오른쪽 앞",
+  "tiercity.wind.right": "오른쪽",
+  "tiercity.wind.back_right": "오른쪽 뒤",
+  "tiercity.wind.back": "뒤쪽",
+  "tiercity.wind.back_left": "왼쪽 뒤",
+  "tiercity.wind.left": "왼쪽",
+  "tiercity.wind.front_left": "왼쪽 앞",
+  "tiercity.wind.above": "위쪽 어딘가"
 }

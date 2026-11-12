@@ -81,7 +81,8 @@ final class DistrictLayout {
         int pole;            // 전봇대: 0 없음, 1 서 있음, 2 부러짐
         int poleH;           // 부러진 전봇대 높이
         int poleAxis;        // 완목 방향(0 x, 1 z)
-        int poleSide, poleArms, poleX, poleZ;
+        int poleSide, poleArms, poleX, poleZ, poleTop;
+        int[] armRel;        // 완목 높이(판 위 몇 칸)
         int[][] armTo;       // 완목마다 전선이 이어지는 상대 완목 좌표(없으면 null)
 
         boolean blocksStanding() { return st != null || light != L_NONE || pole != 0; }
@@ -1401,7 +1402,7 @@ final class DistrictLayout {
         if (dc.light == L_STUB) mx = Math.max(mx, dc.top + dc.lightH);
         else if (dc.light != L_NONE) mx = Math.max(mx, dc.top + POLE_H + 2);
         if (dc.snowY >= 0) mx = Math.max(mx, dc.snowY);
-        if (dc.pole == 1) mx = Math.max(mx, dc.top + Fixtures.POLE_H);
+        if (dc.pole == 1) mx = Math.max(mx, dc.top + dc.poleTop);
         else if (dc.pole == 2) mx = Math.max(mx, dc.top + dc.poleH);
         dc.maxY = mx;
         return dc;
@@ -1504,9 +1505,20 @@ final class DistrictLayout {
 
     private static final ThreadLocal<boolean[]> NO_LINK = ThreadLocal.withInitial(() -> new boolean[1]);
 
+    static final int POLE_GAP = 20;            // 전봇대 평균 간격(한쪽 줄 기준, ±6 흔들림)
+    static final int ARM_MIN_REL = 13;         // 가장 낮은 완목(가로등 10칸 위)
+
+    /** side쪽 줄 n번째 전봇대 자리(흔들린 간격, 가로등 자리는 피함). */
+    private static int poleSlot(long seed, int k, boolean onNs, int lineIdx, int side, int off, int n) {
+        int s = off + 3 + side * (POLE_GAP / 2) + n * POLE_GAP + CityLayout.rand(seed, lineIdx * 7 + side, n, 911 + k, 13) - 6;
+        int lamp = side == 0 ? off : off + 6;
+        if (Math.floorMod(s - lamp, LIGHT_STEP) == 0) s++;
+        return s;
+    }
+
     /**
-     * 길 양쪽 연석에 전봇대가 36칸마다(반대쪽은 18칸 어긋나게) 선다. 전봇대마다 완목 4~6개.
-     * 짝수 번째 완목은 같은 줄 다음 전봇대로, 홀수 번째 완목은 길 건너 비스듬히 앞 전봇대로 전선이 이어져 X자로 엇갈린다.
+     * 길 양쪽 연석에 전봇대가 약 20칸마다 불규칙하게 선다(높이 16~30, 완목 3~7개, 간격 1~3칸).
+     * 짝수 번째 완목은 같은 줄 다음 전봇대로, 홀수 번째 완목은 길 건너 바로 앞쪽 전봇대로 이어져 엇갈린다.
      */
     private static void poleWire(CityLayout.Params p, long seed, int k, boolean onNs, int x, int z, int li, int lj, int ix, int jz,
                                  boolean westOfLine, boolean northOfLine, Decor dc) {
@@ -1515,28 +1527,48 @@ final class DistrictLayout {
         int along = onNs ? z : x;
         int lineIdx = onNs ? li : lj;
         int off = CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 895 + k, LIGHT_STEP);
-        int base = off + 6 + 12 * CityLayout.rand(seed, lineIdx, onNs ? 0 : 1, 905 + k, 3) + side * (POLE_STEP / 2);   // 가로등 사이
-        if (Math.floorMod(along - base, POLE_STEP) != 0) return;
+        int n0 = Math.floorDiv(along - off, POLE_GAP);
+        int n = Integer.MIN_VALUE;
+        for (int d = -1; d <= 1; d++) if (poleSlot(seed, k, onNs, lineIdx, side, off, n0 + d) == along) n = n0 + d;
+        if (n == Integer.MIN_VALUE) return;
         int p0 = poleKind(seed, k, onNs, lineIdx, along, side, ix, jz);
         if (p0 == 0) return;
         dc.pole = p0;
         dc.poleSide = side;
         dc.poleAxis = onNs ? 0 : 1;                        // 길이 z로 뻗으면 완목은 x 방향
-        if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 10); return; }
-        dc.poleArms = 4 + CityLayout.rand(seed, x, z, 909, 3);
+        if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 12); return; }
+        // 높이와 완목: 꼭대기에서부터 1~3칸 간격으로 3~7개(가로등보다 위까지만)
+        int top = 16 + CityLayout.rand(seed, x, z, 912, 15);
+        int want = 3 + CityLayout.rand(seed, x, z, 909, 5);
+        int[] rel = new int[want];
+        int cnt = 0, y = top;
+        while (cnt < want && y >= ARM_MIN_REL) {
+            rel[cnt++] = y;
+            y -= 1 + CityLayout.rand(seed, x * 3 + cnt, z, 913, 3);
+        }
+        dc.armRel = java.util.Arrays.copyOf(rel, Math.max(1, cnt));
+        dc.poleArms = dc.armRel.length;
+        dc.poleTop = top;
         boolean[] guard = NO_LINK.get();
         if (guard[0]) return;
         guard[0] = true;
         try {
-            Decor same = findPole(p, seed, k, onNs, x, z, along + POLE_STEP, side, false);
-            Decor diag = findPole(p, seed, k, onNs, x, z, along + POLE_STEP / 2, 1 - side, true);
+            int nextSame = poleSlot(seed, k, onNs, lineIdx, side, off, n + 1);
+            int nextDiag = Integer.MAX_VALUE;
+            int m0 = Math.floorDiv(along - off, POLE_GAP);
+            for (int m = m0 - 1; m <= m0 + 2; m++) {
+                int t = poleSlot(seed, k, onNs, lineIdx, 1 - side, off, m);
+                if (t > along && t < nextDiag) nextDiag = t;
+            }
+            Decor same = findPole(p, seed, k, onNs, x, z, nextSame, side, false);
+            Decor diag = findPole(p, seed, k, onNs, x, z, nextDiag, 1 - side, true);
             dc.armTo = new int[dc.poleArms][];
             for (int i = 0; i < dc.poleArms; i++) {
                 Decor t = (i % 2 == 0) ? same : diag;
-                if (t == null) continue;
+                if (t == null || t.armRel == null) continue;
                 if (k == 0 && CityLayout.hash01(seed, x * 31 + i, z, 907) < 0.5) continue;   // 1층: 끊긴 전선
-                int ti = Math.min(i, t.poleArms - 1);
-                dc.armTo[i] = new int[]{t.poleX, t.top + Fixtures.POLE_H - 2 * ti, t.poleZ};
+                int ti = Math.min(i, t.armRel.length - 1);
+                dc.armTo[i] = new int[]{t.poleX, t.top + t.armRel[ti], t.poleZ};
             }
         } finally {
             guard[0] = false;
@@ -1572,7 +1604,7 @@ final class DistrictLayout {
         if (dc.pole == 1 && dc.armTo != null) {
             for (int i = 0; i < dc.armTo.length; i++) {
                 int[] t = dc.armTo[i];
-                if (t != null) out.add(new int[]{dc.top + Fixtures.POLE_H - 2 * i, t[0], t[1], t[2]});
+                if (t != null) out.add(new int[]{dc.top + dc.armRel[i], t[0], t[1], t[2]});
             }
         }
         if (dc.st instanceof AlleyCol ac) {
@@ -1643,9 +1675,8 @@ final class DistrictLayout {
         if (dc.pole != 0 && y > dc.top) {
             int rel = y - dc.top;
             if (dc.pole == 2) return rel <= dc.poleH ? Fixtures.pole() : null;
-            if (rel > Fixtures.POLE_H) return null;
-            int fromTop = Fixtures.POLE_H - rel;
-            if (fromTop % 2 == 0 && fromTop / 2 < Math.max(1, dc.poleArms)) return Fixtures.crossarm(dc.poleAxis);
+            if (rel > dc.poleTop) return null;
+            if (dc.armRel != null) for (int r : dc.armRel) if (r == rel) return Fixtures.crossarm(dc.poleAxis);
             return Fixtures.pole();
         }
         if (dc.light != L_NONE && y > dc.top) {
