@@ -1537,16 +1537,13 @@ final class DistrictLayout {
         dc.poleSide = side;
         dc.poleAxis = onNs ? 0 : 1;                        // 길이 z로 뻗으면 완목은 x 방향
         if (p0 == 2) { dc.poleH = 2 + CityLayout.rand(seed, x, z, 906, 12); return; }
-        // 높이와 완목: 꼭대기에서부터 1~3칸 간격으로 3~7개(가로등보다 위까지만)
-        int top = 16 + CityLayout.rand(seed, x, z, 912, 15);
-        int want = 3 + CityLayout.rand(seed, x, z, 909, 5);
-        int[] rel = new int[want];
-        int cnt = 0, y = top;
-        while (cnt < want && y >= ARM_MIN_REL) {
-            rel[cnt++] = y;
-            y -= 1 + CityLayout.rand(seed, x * 3 + cnt, z, 913, 3);
-        }
-        dc.armRel = java.util.Arrays.copyOf(rel, Math.max(1, cnt));
+        // 높이 24~45, 완목은 꼭대기에 1~3개(2칸 간격)
+        int top = 24 + CityLayout.rand(seed, x, z, 912, 22);
+        double q = CityLayout.hash01(seed, x, z, 909);
+        int cnt = q < 0.25 ? 1 : q < 0.75 ? 2 : 3;
+        int[] rel = new int[cnt];
+        for (int i = 0; i < cnt; i++) rel[i] = top - 2 * i;
+        dc.armRel = rel;
         dc.poleArms = dc.armRel.length;
         dc.poleTop = top;
         boolean[] guard = NO_LINK.get();
@@ -1560,15 +1557,41 @@ final class DistrictLayout {
                 int t = poleSlot(seed, k, onNs, lineIdx, 1 - side, off, m);
                 if (t > along && t < nextDiag) nextDiag = t;
             }
+            int prevDiag = Integer.MIN_VALUE, farDiag = Integer.MAX_VALUE;
+            for (int m = m0 - 2; m <= m0 + 3; m++) {
+                int t = poleSlot(seed, k, onNs, lineIdx, 1 - side, off, m);
+                if (t < along && t > prevDiag) prevDiag = t;
+                if (t > nextDiag && t < farDiag) farDiag = t;
+            }
             Decor same = findPole(p, seed, k, onNs, x, z, nextSame, side, false);
             Decor diag = findPole(p, seed, k, onNs, x, z, nextDiag, 1 - side, true);
+            Decor far = findPole(p, seed, k, onNs, x, z, farDiag, 1 - side, true);
+            Decor back = CityLayout.hash01(seed, x, z, 914) < 0.35 ? findPole(p, seed, k, onNs, x, z, prevDiag, 1 - side, true) : null;
             dc.armTo = new int[dc.poleArms][];
+            double broken = k == 0 ? 0.3 : 0.08;
             for (int i = 0; i < dc.poleArms; i++) {
-                Decor t = (i % 2 == 0) ? same : diag;
-                if (t == null || t.armRel == null) continue;
-                if (k == 0 && CityLayout.hash01(seed, x * 31 + i, z, 907) < 0.5) continue;   // 1층: 끊긴 전선
-                int ti = Math.min(i, t.armRel.length - 1);
-                dc.armTo[i] = new int[]{t.poleX, t.top + t.armRel[ti], t.poleZ};
+                // 완목마다 이을 곳: 0번 같은 줄 다음(+가끔 길 건너 뒤쪽), 1번 길 건너 앞, 2번 길 건너 더 먼 앞
+                Decor[] ts = i == 0 ? new Decor[]{same, back} : i == 1 ? new Decor[]{diag} : new Decor[]{far};
+                java.util.ArrayList<Integer> out = new java.util.ArrayList<>();
+                for (Decor t : ts) {
+                    if (t == null || t.armRel == null) continue;
+                    if (CityLayout.hash01(seed, x * 31 + i, z + (t == back ? 7 : 0), 907 + k) < broken) {
+                        // 끊어진 전선: 완목에서 늘어져 허공에 매달림
+                        int dirA = (t.poleX - x) + (t.poleZ - z) > 0 ? 1 : -1;
+                        int len = 3 + CityLayout.rand(seed, x + i, z, 915, 6);
+                        int drop = 5 + CityLayout.rand(seed, x, z + i, 916, 9);
+                        int fx = onNs ? x + CityLayout.rand(seed, x, z, 917, 3) - 1 : x + dirA * len;
+                        int fz = onNs ? z + dirA * len : z + CityLayout.rand(seed, x, z, 917, 3) - 1;
+                        out.add(fx); out.add(dc.top + rel[i] - drop); out.add(fz);
+                        continue;
+                    }
+                    int ti = Math.min(i, t.armRel.length - 1);
+                    out.add(t.poleX); out.add(t.top + t.armRel[ti]); out.add(t.poleZ);
+                }
+                if (out.isEmpty()) continue;
+                int[] arr = new int[out.size()];
+                for (int j = 0; j < arr.length; j++) arr[j] = out.get(j);
+                dc.armTo[i] = arr;
             }
         } finally {
             guard[0] = false;
@@ -1604,7 +1627,8 @@ final class DistrictLayout {
         if (dc.pole == 1 && dc.armTo != null) {
             for (int i = 0; i < dc.armTo.length; i++) {
                 int[] t = dc.armTo[i];
-                if (t != null) out.add(new int[]{dc.top + dc.armRel[i], t[0], t[1], t[2]});
+                if (t == null) continue;
+                for (int j = 0; j + 2 < t.length; j += 3) out.add(new int[]{dc.top + dc.armRel[i], t[j], t[j + 1], t[j + 2]});
             }
         }
         if (dc.st instanceof AlleyCol ac) {

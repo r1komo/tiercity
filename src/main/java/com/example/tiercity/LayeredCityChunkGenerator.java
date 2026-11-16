@@ -99,13 +99,19 @@ public class LayeredCityChunkGenerator extends ChunkGenerator {
                     // 전선 연결점: 이어진 상대 좌표를 블록 엔티티 자료로 기록
                     for (DistrictLayout.Decor d : col.decor()) {
                         if (d == null) continue;
+                        java.util.TreeMap<Integer, java.util.List<Long>> byY = new java.util.TreeMap<>();
                         for (int[] link : DistrictLayout.wireLinks(d, wx, wz)) {
+                            byY.computeIfAbsent(link[0], k -> new java.util.ArrayList<>()).add(BlockPos.asLong(link[1], link[2], link[3]));
+                        }
+                        for (java.util.Map.Entry<Integer, java.util.List<Long>> e : byY.entrySet()) {
                             CompoundTag tag = new CompoundTag();
                             tag.putString("id", TierCityMod.MODID + ":wire");
                             tag.putInt("x", wx);
-                            tag.putInt("y", link[0]);
+                            tag.putInt("y", e.getKey());
                             tag.putInt("z", wz);
-                            tag.putLongArray("Targets", new long[]{BlockPos.asLong(link[1], link[2], link[3])});
+                            long[] arr = new long[e.getValue().size()];
+                            for (int i = 0; i < arr.length; i++) arr[i] = e.getValue().get(i);
+                            tag.putLongArray("Targets", arr);
                             chunk.setBlockEntityNbt(tag);
                         }
                     }
